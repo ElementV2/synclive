@@ -26,7 +26,8 @@ class HandLocator:
             os.environ.setdefault("GLOG_minloglevel", "2")
             from mediapipe.tasks.python import BaseOptions, vision
             opts = vision.HandLandmarkerOptions(
-                base_options=BaseOptions(model_asset_path=str(p)),
+                # chargé en mémoire : MediaPipe ne sait pas ouvrir un chemin non-ASCII (accents…)
+                base_options=BaseOptions(model_asset_buffer=p.read_bytes()),
                 num_hands=2,
                 running_mode=vision.RunningMode.IMAGE,
                 min_hand_detection_confidence=0.35,
