@@ -87,9 +87,10 @@ def detect_claps(sig: np.ndarray, rate: int, t0: float, sensitivity: float = 1.0
         ip = a + int(np.argmax(env[a:b]))
         pv = float(env[ip])
         nz = float(noise[p])
-        # début d'attaque : premier franchissement de 20 % au-dessus du bruit, dans les 30 ms
+        # début d'attaque : dernier passage sous 20 % avant le pic (jusqu'à 400 ms avant :
+        # sur un bip long, le pic peut tomber n'importe où pendant la note)
         lvl = nz + 0.2 * (pv - nz)
-        lo = max(0, ip - int(0.030 * rate))
+        lo = max(0, ip - int(0.400 * rate))
         seg = env[lo: ip + 1]
         below = np.nonzero(seg < lvl)[0]
         start = lo + (int(below[-1]) + 1 if below.size else 0)
@@ -99,18 +100,26 @@ def detect_claps(sig: np.ndarray, rate: int, t0: float, sensitivity: float = 1.0
             onset = start - 1 + float(np.clip(frac, 0, 1))
         else:
             onset = float(start)
-        rise = (ip - onset) / rate
+        if claps and abs((t0 + onset / rate) - claps[-1].t) < 0.05:
+            continue  # même note longue détectée deux fois
+        # montée : temps pour passer de 20 % à 90 % (attaque franche d'un clap ou d'un bip)
+        hi_lvl = nz + 0.9 * (pv - nz)
+        up = np.nonzero(env[start: ip + 1] >= hi_lvl)[0]
+        rise = ((start + int(up[0])) - onset) / rate if up.size else (ip - onset) / rate
+        freq = _tone_freq(sig, rate, int(onset))
         # décroissance : énergie 40-80 ms après le pic
         d0, d1 = ip + int(0.04 * rate), ip + int(0.08 * rate)
         tail = float(env[d0:d1].mean()) if d1 <= env.size and d1 > d0 else 0.0
-        if rise > 0.012 or tail > 0.45 * pv:
-            continue  # pas un clap (voix, musique, son tenu)
+        if rise > 0.012:
+            continue  # attaque molle : voix, musique
+        if freq is None and tail > 0.45 * pv:
+            continue  # bruit tenu qui n'est ni un clap ni un bip (une note pure peut durer)
         claps.append(AudioClap(
             t=t0 + onset / rate,
             peak_t=t0 + ip / rate,
             snr_db=float(20 * np.log10(pv / nz)),
             level=pv,
-            freq=_tone_freq(sig, rate, int(onset)),
+            freq=freq,
         ))
     if claps:
         m = max(c.level for c in claps)

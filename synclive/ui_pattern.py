@@ -11,7 +11,8 @@ from PIL import Image
 from PySide6.QtCore import Qt, QThread, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QImage, QPixmap
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QFileDialog, QGridLayout, QGroupBox, QHBoxLayout, QLabel, QListWidget,
+    QApplication, QCheckBox, QComboBox, QFileDialog, QGridLayout, QGroupBox, QHBoxLayout, QHeaderView, QLabel,
+    QTableWidget, QTableWidgetItem,
     QProgressBar, QPushButton, QSpinBox, QVBoxLayout, QWidget,
 )
 
@@ -32,6 +33,13 @@ def titled(title: str, w: QWidget) -> QWidget:
     lay.addWidget(lab)
     lay.addWidget(w)
     return box
+
+
+class NoWheelSpinBox(QSpinBox):
+    """Champ numérique insensible à la molette (défiler la liste ne change aucun n°)."""
+
+    def wheelEvent(self, e):
+        e.ignore()
 
 
 class PatternWorker(QThread):
@@ -157,14 +165,7 @@ class PatternPage(QWidget):
         left.addStretch(1)
 
         right = QVBoxLayout()
-        right.addWidget(self._network_box())
-        prev = QHBoxLayout()
-        self.prev_normal, self.prev_flash = QLabel(), QLabel()
-        for w in (self.prev_normal, self.prev_flash):
-            w.setAlignment(Qt.AlignCenter)
-        prev.addWidget(titled("Aperçu", self.prev_normal))
-        prev.addWidget(titled("Image 0 : flash et bip", self.prev_flash))
-        right.addLayout(prev)
+        right.addWidget(self._network_box(), 1)
         tip = QLabel("Chaque boucle porte un numéro, un nom et un QR code (ex. 07 · ATLAS) : à l'analyse, "
                      "SyncLive lit le QR pour savoir quelle machine est à l'image, même si toutes affichent "
                      "la même mire.\n"
@@ -175,49 +176,63 @@ class PatternPage(QWidget):
         tip.setWordWrap(True)
         tip.setStyleSheet("color:#8A8780;")
         right.addWidget(tip)
-        right.addStretch(1)
         lay.addLayout(left, 2)
         lay.addLayout(right, 3)
 
         for cb in list(self.fps_checks.values()) + list(self.res_checks.values()):
             cb.toggled.connect(self._count)
-        for cb in self.res_checks.values():
-            cb.toggled.connect(self.update_preview)
         self.n_sources.valueChanged.connect(self._count)
-        self.first_source.valueChanged.connect(self.update_preview)
-        self.update_preview()
         self._count()
 
     # --- partage réseau ------------------------------------------------------------
     def _network_box(self) -> QGroupBox:
         g = QGroupBox("Partage réseau")
-        lay = QHBoxLayout(g)
+        v = QVBoxLayout(g)
+        top = QHBoxLayout()
         self.qr_label = QLabel()
-        self.qr_label.setFixedSize(170, 170)
+        self.qr_label.setFixedSize(150, 150)
         self.qr_label.setAlignment(Qt.AlignCenter)
         self.qr_label.setStyleSheet("background:#1B1B20; border:1px solid #2A2A30; border-radius:6px;")
-        lay.addWidget(self.qr_label)
+        top.addWidget(self.qr_label)
         col = QVBoxLayout()
         row = QHBoxLayout()
+        self.share_btn = QPushButton("Démarrer le partage")
+        self.share_btn.setObjectName("primary")
+        self.share_btn.clicked.connect(self._toggle_share)
         self.port = QSpinBox()
         self.port.setRange(1024, 65535)
         self.port.setValue(server.DEFAULT_PORT)
         self.port.setPrefix("port ")
-        self.share_btn = QPushButton("Démarrer le partage")
-        self.share_btn.setObjectName("primary")
-        self.share_btn.clicked.connect(self._toggle_share)
         row.addWidget(self.share_btn)
         row.addWidget(self.port)
+        row.addStretch(1)
         col.addLayout(row)
         self.url_label = QLabel("Chaque machine ouvre un lien et reçoit son identifiant. Aucune installation.")
         self.url_label.setWordWrap(True)
         self.url_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         col.addWidget(self.url_label)
-        self.clients = QListWidget()
-        self.clients.setMaximumHeight(110)
-        col.addWidget(self.clients)
-        lay.addLayout(col, 1)
+        col.addStretch(1)
+        top.addLayout(col, 1)
+        v.addLayout(top)
+
+        # une ligne par machine ; le n° se change directement sur la ligne
+        self.clients = QTableWidget(0, 6)
+        self.clients.setHorizontalHeaderLabels(["N°", "Nom", "État", "Adresse", "Navigateur", "Lecture"])
+        self.clients.verticalHeader().setVisible(False)
+        self.clients.setSelectionMode(QTableWidget.NoSelection)
+        self.clients.setEditTriggers(QTableWidget.NoEditTriggers)
+        hh = self.clients.horizontalHeader()
+        hh.setSectionResizeMode(QHeaderView.ResizeToContents)
+        hh.setSectionResizeMode(4, QHeaderView.Stretch)
+        v.addWidget(self.clients, 1)
+        self.net_hint = QLabel("Change le n° d'une machine directement sur sa ligne : elle l'applique en "
+                               "moins de 3 s et sa boucle redémarre avec le nouveau QR. Si le n° est déjà pris, "
+                               "les deux machines échangent leur n°.")
+        self.net_hint.setWordWrap(True)
+        self.net_hint.setStyleSheet("color:#8A8780;")
+        v.addWidget(self.net_hint)
         self.server: server.LoopServer | None = None
+        self._rows: list[int] = []
         self.timer = QTimer(self)
         self.timer.timeout.connect(self._refresh_clients)
         return g
@@ -230,7 +245,8 @@ class PatternPage(QWidget):
             self.share_btn.setText("Démarrer le partage")
             self.url_label.setText("Arrêté.")
             self.qr_label.clear()
-            self.clients.clear()
+            self.clients.setRowCount(0)
+            self._rows = []
             self.port.setEnabled(True)
             return
         srv = server.LoopServer(port=self.port.value(), periods=self.periods.value())
@@ -257,16 +273,42 @@ class PatternPage(QWidget):
     def _refresh_clients(self) -> None:
         if not self.server:
             return
+        # ne pas reconstruire pendant qu'on modifie un n°
+        fw = QApplication.focusWidget()
+        if isinstance(fw, QSpinBox) and self.clients.isAncestorOf(fw):
+            return
         now = time.time()
-        items = []
-        for c in self.server.registry.clients():
+        rows = self.server.registry.clients()
+        ids = [c["id"] for c in rows]
+        if ids != self._rows:
+            self._rows = ids
+            self.clients.setRowCount(0)
+            self.clients.setRowCount(len(rows))
+            for r, c in enumerate(rows):
+                sp = NoWheelSpinBox()
+                sp.setRange(1, pattern.MAX_SOURCES)
+                sp.setValue(c["id"])
+                sp.setPrefix("")
+                sp.editingFinished.connect(lambda sid=c["id"], box=sp: self._renumber(sid, box.value()))
+                self.clients.setCellWidget(r, 0, sp)
+        for r, c in enumerate(rows):
             online = now - c["seen"] < 15
-            state = "en ligne" if online else "hors ligne"
-            play = f"   lecture {c['playing']}" if c.get("playing") else ""
-            items.append(f"{c['label']:<16}  {state:<10}  {c['ip']:<15}  {c['agent']}{play}")
-        if [self.clients.item(i).text() for i in range(self.clients.count())] != items:
-            self.clients.clear()
-            self.clients.addItems(items or ["Aucune machine connectée pour l'instant."])
+            new = self.server.registry.pending.get(c["id"])
+            state = f"passe en {new:02d}…" if new else ("en ligne" if online else "hors ligne")
+            vals = [pattern.source_name(c["id"]), state, c["ip"],
+                    c["agent"], c.get("playing") or "—"]
+            for col, txt in enumerate(vals, start=1):
+                it = self.clients.item(r, col)
+                if it is None or it.text() != txt:
+                    it = QTableWidgetItem(txt)
+                    if col == 2:
+                        it.setForeground(Qt.white if online else Qt.gray)
+                    self.clients.setItem(r, col, it)
+
+    def _renumber(self, sid: int, new: int) -> None:
+        if self.server and new != sid:
+            self.server.registry.renumber(sid, new)
+            self._rows = []          # reconstruction au prochain rafraîchissement
 
     def shutdown(self) -> None:
         if self.server:
@@ -302,15 +344,6 @@ class PatternPage(QWidget):
         n = len(self.specs())
         self.count.setText(f"{n} fichier(s) à générer")
         self.go.setEnabled(n > 0 and not (self.worker and self.worker.isRunning()))
-
-    def update_preview(self) -> None:
-        sel = [n for n, cb in self.res_checks.items() if cb.isChecked()] or ["Full HD 1920×1080"]
-        w, h = pattern.RESOLUTIONS[sel[0]]
-        sp = pattern.PatternSpec(w, h, pattern.FRAME_RATES["29.97"], source=self.first_source.value())
-        for lab, i in ((self.prev_normal, 5), (self.prev_flash, 0)):
-            im = Image.fromarray(pattern.preview(sp, i))
-            im.thumbnail((430, 260))
-            lab.setPixmap(pil_to_pixmap(im))
 
     def generate(self) -> None:
         specs = self.specs()

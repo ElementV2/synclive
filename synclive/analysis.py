@@ -63,6 +63,7 @@ class CameraResult:
     confidence: str                  # "élevée" | "moyenne" | "faible" | "aucune"
     kind: str = "camera"             # "camera" | "mire"
     source_label: str | None = None  # identifiant de mire SyncLive lu dans le QR (« 07 · ATLAS »)
+    tile: str | None = None          # vignette du multiview (« vignette haut gauche »)
     same_look_as: list[str] = field(default_factory=list)
     image: np.ndarray | None = None
 
@@ -231,8 +232,10 @@ def aggregate_camera(an: Analysis, cid: int) -> CameraResult:
         claps and sum(c.method.startswith("mire") for c in claps) > len(claps) / 2) else "camera"
     qrs = [an.shots[i].qr for i in shot_ids if an.shots[i].qr]
     label = max(set(qrs), key=qrs.count) if qrs else None
+    tiles = {an.shots[i].tile for i in shot_ids}
+    tile = tiles.pop() if len(tiles) == 1 else None
     return CameraResult(
-        id=cid, name=name, shots=shot_ids, claps=claps, source_label=label,
+        id=cid, name=name, shots=shot_ids, claps=claps, source_label=label, tile=tile,
         offset=off, spread=spread, n_used=n, n_total=len([c for c in claps if not c.excluded]),
         confidence=conf, kind=kind, image=img,
     )
@@ -297,7 +300,7 @@ def _split_shots_by_offset(shots: list[shots_mod.Shot], claps: list[Clap], scan:
                                 start=float(times[i0]) if j else s.start,
                                 end=float(times[i1]) if i1 < times.size and j < len(bounds) - 2 else s.end,
                                 camera=s.camera)
-            ns.look, ns.qr = s.look, s.qr
+            ns.look, ns.qr, ns.region, ns.tile = s.look, s.qr, s.region, s.tile
             new_shots.append(ns)
             group = spans[j][3] if spans else []
             seg_off[ns.index] = spans[j][2] if spans else None
@@ -333,9 +336,13 @@ def _match_cycle(path: str, shots: list[shots_mod.Shot], scan: media.MotionScan,
         wide[c.id] = visual.flash_candidates(sig, c.t_audio, max(window, (CYCLE / 2 - 0.5) * P))
     times = sorted({v.t for vs in wide.values() for v in vs})
     frames = media.grab_frames(path, times, max_width=1920, apply_rotation=False)
+    region_of = {}
+    for c in coded:
+        for v in wide[c.id]:
+            region_of[v.t] = shots[c.shot].region
     idx: dict[float, int | None] = {}
     for t in times:
-        r = decode_qr_full(frames[t]) if t in frames else None
+        r = decode_qr_full(_crop(frames[t], region_of[t])) if t in frames else None
         idx[t] = r[2] if r else None
     for c in coded:
         cands = wide[c.id]
@@ -368,7 +375,7 @@ def _split_shots_by_qr(path: str, shots: list[shots_mod.Shot], claps: list[Clap]
         reads = []
         for t in targets.get(s.index, []):
             img = frames.get(t)
-            r = decode_qr(img) if img is not None else None
+            r = decode_qr(_crop(img, s.region)) if img is not None else None
             if r:
                 reads.append((t, source_label(r[0])))
         if s.index in mire_shots:
@@ -407,7 +414,7 @@ def _split_shots_by_qr(path: str, shots: list[shots_mod.Shot], claps: list[Clap]
             fine = [float(t) for t in np.arange(lo + 0.1, hi - 0.05, 0.1)]
             got = media.grab_frames(path, fine, max_width=1920, apply_rotation=False) if fine else {}
             for t in fine:
-                r = decode_qr(got[t]) if t in got else None
+                r = decode_qr(_crop(got[t], s.region)) if t in got else None
                 lab = source_label(r[0]) if r else None
                 if lab == a_run[0]:
                     lo = t
@@ -424,7 +431,7 @@ def _split_shots_by_qr(path: str, shots: list[shots_mod.Shot], claps: list[Clap]
             ns = shots_mod.Shot(index=len(out), i0=i0, i1=i1,
                                 start=s.start if j == 0 else float(times[i0]),
                                 end=s.end if j == len(merged) - 1 else float(times[i1]),
-                                camera=s.camera, look=s.look, qr=r[0])
+                                camera=s.camera, look=s.look, qr=r[0], region=s.region, tile=s.tile)
             out.append(ns)
         segs = list(zip(range(len(merged)), bounds[:-1], bounds[1:]))
         first_new = len(out) - len(merged)
@@ -510,6 +517,76 @@ def _assign_sources(shots: list[shots_mod.Shot], look: dict[int, object], seg_of
         s.camera = match["id"]
 
 
+def _crop(img: np.ndarray, region: tuple[float, float, float, float]) -> np.ndarray:
+    if region == (0.0, 0.0, 1.0, 1.0):
+        return img
+    h, w = img.shape[:2]
+    x0, y0, x1, y1 = region
+    return np.ascontiguousarray(img[int(y0 * h):max(int(y0 * h) + 1, int(y1 * h)),
+                                    int(x0 * w):max(int(x0 * w) + 1, int(x1 * w))])
+
+
+def _boxes_in_region(locator, img: np.ndarray, region) -> list:
+    """Mains détectées dans la vignette, coordonnées ramenées à l'image entière."""
+    x0, y0, x1, y1 = region
+    out = []
+    for bx0, by0, bx1, by1 in locator.boxes(_crop(img, region)):
+        out.append((x0 + bx0 * (x1 - x0), y0 + by0 * (y1 - y0), x0 + bx1 * (x1 - x0), y0 + by1 * (y1 - y0)))
+    return out
+
+
+def _split_multiview(shots: list[shots_mod.Shot], scan: media.MotionScan) -> list[shots_mod.Shot]:
+    """Découpe chaque plan en vignettes s'il s'agit d'une mosaïque de caméras bord à bord."""
+    from .multiview import detect_tiles, tile_label
+    if scan.samples is None:
+        return shots
+    out: list[shots_mod.Shot] = []
+    next_look = max((s.look for s in shots), default=0) + 1
+    tile_looks: dict[tuple, int] = {}
+    for s in shots:
+        m = (scan.sample_idx >= s.i0) & (scan.sample_idx < s.i1)
+        tiles = detect_tiles(scan.samples[m]) if m.sum() >= 4 else [(0.0, 0.0, 1.0, 1.0)]
+        if len(tiles) <= 1:
+            s.index = len(out)
+            out.append(s)
+            continue
+        for k, reg in enumerate(tiles):
+            key = (s.look, tuple(round(v, 2) for v in reg))
+            if key not in tile_looks:
+                tile_looks[key] = next_look
+                next_look += 1
+            out.append(shots_mod.Shot(index=len(out), i0=s.i0, i1=s.i1, start=s.start, end=s.end,
+                                      camera=s.camera, look=tile_looks[key], region=reg,
+                                      tile=tile_label(reg, len(tiles))))
+    return out
+
+
+def _auto_audio(path: str, info: media.VideoInfo, st: Settings, stage) -> tuple[list, int, float]:
+    """Aucun réglage pour l'utilisateur : on prend la piste demandée (la 1re par défaut) ; si elle ne
+    contient presque aucun clap/bip, on essaie les autres pistes puis une sensibilité plus élevée,
+    et on garde le meilleur résultat."""
+    tracks = [st.audio_track] + [i for i in range(info.n_audio_streams) if i != st.audio_track]
+    best = ([], st.audio_track, st.audio_sensitivity)
+    for n, tr in enumerate(tracks):
+        try:
+            sig, rate, t0 = media.decode_audio(path, tr, stage("Décodage audio", 0.0, 0.1) if n == 0 else None,
+                                               info.duration)
+        except ValueError:
+            if n == 0:
+                raise
+            continue
+        for sens in (st.audio_sensitivity, st.audio_sensitivity * 2.0):
+            cl = audio_claps.detect_claps(sig, rate, t0, sens)
+            if len(cl) > len(best[0]):
+                best = (cl, tr, sens)
+            if len(cl) >= 2:
+                break
+        del sig
+        if len(best[0]) >= 2:
+            break
+    return best
+
+
 def run(path: str, settings: Settings | None = None,
         progress: Callable[[str, float], None] | None = None,
         cancel: Callable[[], bool] | None = None) -> Analysis:
@@ -522,11 +599,7 @@ def run(path: str, settings: Settings | None = None,
     prog("Lecture des infos du fichier", 0.0)
     info = media.probe(path)
 
-    sig, rate, t0 = media.decode_audio(path, st.audio_track, stage("Décodage audio", 0.0, 0.1),
-                                       info.duration)
-    prog("Détection des claps et bips audio", 0.1)
-    aclaps = audio_claps.detect_claps(sig, rate, t0, st.audio_sensitivity)
-    del sig
+    aclaps, st.audio_track, st.audio_sensitivity = _auto_audio(path, info, st, stage)
 
     scan = media.scan_video(path, info, stage("Analyse des images", 0.12, 0.75), cancel)
 
@@ -536,6 +609,10 @@ def run(path: str, settings: Settings | None = None,
     for s in shots:
         s.look = s.camera
 
+    # --- multiview maison : chaque vignette devient une source ---------------------------
+    prog("Recherche de vignettes (multiview)", 0.77)
+    shots = _split_multiview(shots, scan)
+
     def shot_at(t: float) -> int | None:
         for s in shots:
             if s.start <= t < s.end:
@@ -544,9 +621,9 @@ def run(path: str, settings: Settings | None = None,
 
     claps_by_shot: dict[int, list[audio_claps.AudioClap]] = {}
     for ac in aclaps:
-        si = shot_at(ac.t)
-        if si is not None:
-            claps_by_shot.setdefault(si, []).append(ac)
+        for s in shots:                       # plusieurs vignettes peuvent partager le même instant
+            if s.start <= ac.t < s.end:
+                claps_by_shot.setdefault(s.index, []).append(ac)
 
     # --- zone des mains par plan (aide facultative) ------------------------------
     masks: dict[int, np.ndarray] = {}
@@ -563,7 +640,8 @@ def run(path: str, settings: Settings | None = None,
         frames = media.grab_frames(path, [t for ts in want.values() for t in ts],
                                    max_width=640, apply_rotation=False)
         for si, ts in want.items():
-            boxes = [b for t in ts if t in frames for b in locator.boxes(frames[t])]
+            boxes = [b for t in ts if t in frames
+                     for b in _boxes_in_region(locator, frames[t], shots[si].region)]
             m = visual.roi_from_boxes(boxes)
             if m is not None:
                 masks[si] = m
@@ -575,12 +653,24 @@ def run(path: str, settings: Settings | None = None,
         s = shots[si]
         sigs = visual.ShotSignal(scan, s)
         per = [(ac, visual.find_candidates(sigs, ac.t, st.max_offset, masks.get(si))) for ac in lst]
-        # type d'événement du plan : majorité des candidats les plus forts
-        kinds = [max(c, key=lambda v: v.strength).kind for _, c in per if c]
-        kind = "flash" if kinds and kinds.count("flash") > len(kinds) / 2 else "clap"
+        # Un bip de mire est une note pure (fréquence mesurée), un clap un bruit large bande (None).
+        # Les deux peuvent se trouver dans la même bande son (mosaïque caméras + mires) : chaque
+        # plan ne garde que les événements de son type.
+        from .pattern import tone_index
+        bips = [(ac, c) for ac, c in per if ac.freq is not None]
+        hand_claps = [(ac, c) for ac, c in per if ac.freq is None]
+        # mire : au moins 2 bips qui tombent chacun sur un flash DE CETTE VIGNETTE (un seul « flash »
+        # peut être un décor qui scintille). Bips SyncLive numérotés : recherche large (± 3,5 s),
+        # le n° du bip lèvera ensuite l'ambiguïté de période.
+        flash_bips = 0
+        for ac, c in bips:
+            wide = tone_index(ac.freq) is not None
+            fl = visual.flash_candidates(sigs, ac.t, 3.5) if wide else [v for v in c if v.kind == "flash"]
+            flash_bips += bool(fl)
+        kind = "flash" if flash_bips >= 2 else "clap"
+        keep = (bips if kind == "flash" else hand_claps) or per
         method = "mire (flash)" if kind == "flash" else ("clap (mains)" if si in masks else "clap (mouvement)")
-        for ac, cands in per:
-            from .pattern import tone_index
+        for ac, cands in keep:
             claps.append(Clap(id=len(claps), shot=si, t_audio=ac.t, snr_db=ac.snr_db,
                               candidates=[v for v in cands if v.kind == kind], method=method,
                               tone=tone_index(ac.freq) if kind == "flash" else None))
@@ -648,6 +738,6 @@ def run(path: str, settings: Settings | None = None,
     frames = media.grab_frames(path, list(targets.values()))
     for si, t in targets.items():
         if t in frames:
-            an.shot_images[si] = frames[t]
+            an.shot_images[si] = _crop(frames[t], shots[si].region)
     prog("Terminé", 1.0)
     return an

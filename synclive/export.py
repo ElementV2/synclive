@@ -40,9 +40,12 @@ def fmt_frames(sec: float | None, fps: float) -> str:
 
 
 def display_name(cam: CameraResult) -> str:
-    if cam.source_label and not cam.name.startswith(cam.source_label):
-        return f"{cam.name} · {cam.source_label}"
-    return cam.name
+    name = cam.name
+    if cam.source_label and not name.startswith(cam.source_label):
+        name = f"{name} · {cam.source_label}"
+    if getattr(cam, "tile", None):
+        name = f"{name} · {cam.tile}"
+    return name
 
 
 @dataclass
@@ -100,7 +103,7 @@ def both(sec: float | None, fps: float, signed: bool = False) -> str:
 def status(cam: CameraResult, fps: float) -> tuple[str, str]:
     """(constat en majuscules, explication) : qui est en retard, l'image ou le son."""
     if cam.offset is None:
-        return "NON MESURÉE", ("aucun bip associé à un flash : mire sans son ? (vérifie la piste audio)"
+        return "NON MESURÉE", ("aucun bip associé à un flash : le son de cette machine n'a pas été enregistré ?"
                                if cam.kind == "mire" else "aucun clap à la fois visible et audible")
     if round(cam.offset * 1000) == 0:
         return "SYNCHRO", "le son et l'image arrivent en même temps"
@@ -120,8 +123,8 @@ def fmt_audio_delay(plan: CorrectionPlan) -> str:
 
 def fmt_residual(fix: SourceFix, fps: float) -> str:
     if fix.residual is None or round(fix.residual * 1000) == 0:
-        return "écart restant 0 ms · 0 img"
-    return f"écart restant {both(fix.residual, fps, signed=True)}"
+        return "reste après correction 0 ms · 0 img"
+    return f"reste après correction {both(fix.residual, fps, signed=True)}"
 
 
 def fmt_video_action(fix: SourceFix, fps: float) -> str:
@@ -273,7 +276,7 @@ def export_all(an: Analysis, out_dir: str | Path) -> list[Path]:
         w = csv.writer(f, delimiter=";")
         w.writerow(["source", "constat", "decalage_mesure_ms", "decalage_mesure_images",
                     "retard_son_global_ms", "retard_son_global_images",
-                    "retard_image_images", "retard_image_ms", "ecart_restant_ms", "ecart_restant_images"])
+                    "retard_image_images", "retard_image_ms", "reste_apres_correction_ms", "reste_apres_correction_images"])
         fr = lambda sec: "" if sec is None else f"{sec * fps:.2f}"
         ms_ = lambda sec: "" if sec is None else f"{sec * 1000:.1f}"
         for fx in plan.fixes:
@@ -304,8 +307,8 @@ def export_all(an: Analysis, out_dir: str | Path) -> list[Path]:
                     "constat": status(f.cam, fps)[0],
                     "retard_image_images": f.frames,
                     "retard_image_ms": None if f.frames is None else round(f.frames / fps * 1000, 1),
-                    "ecart_restant_ms": None if f.residual is None else round(f.residual * 1000, 1),
-                    "ecart_restant_images": None if f.residual is None else round(f.residual * fps, 2),
+                    "reste_apres_correction_ms": None if f.residual is None else round(f.residual * 1000, 1),
+                    "reste_apres_correction_images": None if f.residual is None else round(f.residual * fps, 2),
                 }
                 for f in plan.fixes
             ],

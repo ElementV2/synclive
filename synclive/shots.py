@@ -21,6 +21,8 @@ class Shot:
     camera: int = 0
     look: int = 0               # groupe d'apparence
     qr: str | None = None       # identifiant de mire SyncLive lu dans le QR (« 07 · ATLAS »)
+    region: tuple[float, float, float, float] = (0.0, 0.0, 1.0, 1.0)   # vignette (x0, y0, x1, y1)
+    tile: str | None = None     # libellé de la vignette (« vignette haut gauche »), None = plein écran
 
     @property
     def duration(self) -> float:

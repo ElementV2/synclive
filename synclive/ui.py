@@ -13,13 +13,14 @@ from PySide6.QtCore import Qt, QThread, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QIcon, QImage, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFrame, QGridLayout,
-    QGroupBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMainWindow, QMessageBox,
+    QGroupBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox,
     QProgressBar, QPushButton, QScrollArea, QSpinBox, QSplitter, QTableWidget,
     QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget,
 )
 
 from . import __version__, analysis, brand, export
 from .ui_pattern import PatternPage
+from .ui_update import UpdateBanner
 
 VIDEO_EXT = {".mp4", ".mov", ".mkv", ".avi", ".mxf", ".m4v", ".ts", ".mts", ".m2ts", ".webm", ".flv"}
 
@@ -185,19 +186,24 @@ class CameraCard(QFrame):
         self.name.editingFinished.connect(lambda: self.renamed.emit(cam.id, self.name.text().strip() or cam.name))
         row.addWidget(self.name, 1)
         if others:
-            self.combo = QComboBox()
-            self.combo.addItem("Fusionner avec…", None)
+            # bouton + menu (et non une liste déroulante) : la molette de la souris ne doit jamais
+            # pouvoir déclencher une fusion en faisant défiler la page
+            btn = QPushButton("Fusionner avec…")
+            menu = QMenu(btn)
             for oid, oname in others:
-                self.combo.addItem(oname, oid)
-            self.combo.activated.connect(self._merge)
-            row.addWidget(self.combo)
+                act = menu.addAction(oname)
+                act.triggered.connect(lambda _=False, d=oid: self.merge.emit(self.cam.id, d))
+            btn.setMenu(menu)
+            row.addWidget(btn)
         lay.addLayout(row)
         self.setFixedSize(self.sizeHint())
 
-    def _merge(self, i: int) -> None:
-        dst = self.combo.itemData(i)
-        if dst is not None:
-            self.merge.emit(self.cam.id, dst)
+
+class NoWheelComboBox(QComboBox):
+    """Liste déroulante qui ignore la molette : défiler la page ne modifie rien par accident."""
+
+    def wheelEvent(self, e):
+        e.ignore()
 
 
 class MainWindow(QMainWindow):
@@ -211,7 +217,15 @@ class MainWindow(QMainWindow):
 
         self.setWindowIcon(QIcon(str(brand.asset("app-icon-256.png"))))
         self.main_tabs = QTabWidget()
-        self.setCentralWidget(self.main_tabs)
+        central = QWidget()
+        cv = QVBoxLayout(central)
+        cv.setContentsMargins(0, 0, 0, 0)
+        cv.setSpacing(0)
+        self.update_banner = UpdateBanner(self)
+        cv.addWidget(self.update_banner)
+        cv.addWidget(self.main_tabs, 1)
+        self.setCentralWidget(central)
+        QTimer.singleShot(1500, self.update_banner.check)   # vérification discrète au démarrage
         corner = QWidget()
         cl = QHBoxLayout(corner)
         cl.setContentsMargins(8, 4, 18, 4)
@@ -235,9 +249,9 @@ class MainWindow(QMainWindow):
         top = QHBoxLayout()
         self.drop = DropZone()
         self.drop.dropped.connect(self.start)
-        top.addWidget(self.drop, 3)
-        top.addWidget(self._settings_box(), 2)
-        v.addLayout(top)
+        top.addWidget(self.drop, 1)
+        v.addLayout(top, 1)          # avant analyse : la zone de dépôt occupe tout l'écran
+        self._root_layout = v
 
         pr = QHBoxLayout()
         self.status = QLabel("Prêt. Conseil : 3 à 5 claps secs par caméra, mains bien visibles.")
@@ -277,7 +291,8 @@ class MainWindow(QMainWindow):
         split.addWidget(self._titled("Claps / bips — décoche un événement douteux, ou choisis un autre candidat "
                                      "image si l'automatique s'est trompé", self.claps_table))
         self.tabs.addTab(split, "Détail")
-        v.addWidget(self.tabs, 1)
+        v.addWidget(self.tabs, 0)
+        self.tabs.setVisible(False)
 
         bot = QHBoxLayout()
         self.summary = QLabel("")
@@ -292,6 +307,11 @@ class MainWindow(QMainWindow):
         self.open_btn.clicked.connect(lambda: self.last_export and
                                       QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.last_export))))
         bot.addWidget(self.summary, 1)
+        self.undo_btn = QPushButton("Annuler la dernière modification")
+        self.undo_btn.setEnabled(False)
+        self.undo_btn.clicked.connect(self.undo)
+        self._undo: list = []
+        bot.addWidget(self.undo_btn)
         bot.addWidget(self.open_btn)
         bot.addWidget(self.export_btn)
         v.addLayout(bot)
@@ -307,35 +327,6 @@ class MainWindow(QMainWindow):
         l.addWidget(w)
         return box
 
-    def _settings_box(self) -> QGroupBox:
-        g = QGroupBox("Réglages")
-        f = QGridLayout(g)
-        self.s_max = QSpinBox()
-        self.s_max.setRange(100, 3000)
-        self.s_max.setSingleStep(100)
-        self.s_max.setValue(600)
-        self.s_max.setSuffix(" ms")
-        self.s_track = QSpinBox()
-        self.s_track.setRange(1, 16)
-        self.s_sens = QDoubleSpinBox()
-        self.s_sens.setRange(0.3, 4.0)
-        self.s_sens.setSingleStep(0.1)
-        self.s_sens.setValue(1.0)
-        self.s_group = QDoubleSpinBox()
-        self.s_group.setRange(0.01, 0.5)
-        self.s_group.setSingleStep(0.01)
-        self.s_group.setDecimals(3)
-        self.s_group.setValue(0.07)
-        self.s_hands = QCheckBox("Détection des mains (MediaPipe)")
-        self.s_hands.setChecked(True)
-        rows = [("Décalage max cherché", self.s_max), ("Piste audio", self.s_track),
-                ("Sensibilité audio", self.s_sens), ("Seuil regroupement caméras", self.s_group)]
-        for i, (lab, w) in enumerate(rows):
-            f.addWidget(QLabel(lab), i, 0)
-            f.addWidget(w, i, 1)
-        f.addWidget(self.s_hands, len(rows), 0, 1, 2)
-        return g
-
     # --- analyse -------------------------------------------------------------
     def start(self, path: str) -> None:
         if self.worker and self.worker.isRunning():
@@ -345,9 +336,7 @@ class MainWindow(QMainWindow):
                                      f"« {Path(path).name} » n'a pas une extension vidéo connue. Essayer quand même ?")
             if r != QMessageBox.Yes:
                 return
-        st = analysis.Settings(max_offset=self.s_max.value() / 1000, audio_track=self.s_track.value() - 1,
-                               audio_sensitivity=self.s_sens.value(), group_threshold=self.s_group.value(),
-                               use_hands=self.s_hands.isChecked())
+        st = analysis.Settings()   # aucun réglage : piste audio et sensibilité choisies automatiquement
         self.drop.label.setText(Path(path).name)
         self.export_btn.setEnabled(False)
         self.cancel_btn.setEnabled(True)
@@ -369,15 +358,21 @@ class MainWindow(QMainWindow):
 
     def _done(self, an: analysis.Analysis) -> None:
         self.an = an
+        self._undo.clear()
+        self.undo_btn.setEnabled(False)
+        # résultats : la zone de dépôt se réduit, les onglets prennent la place
+        self.tabs.setVisible(True)
+        self._root_layout.setStretch(0, 0)
+        self._root_layout.setStretchFactor(self.tabs, 1)
         self.cancel_btn.setEnabled(False)
         self.export_btn.setEnabled(True)
         i = an.info
         self.status.setText("Analyse terminée.")
         self.summary.setText(f"{i.width}×{i.height} · {i.fps_label} i/s · {i.duration:.1f} s · "
-                             f"{len(an.shots)} plan(s) · {len(an.claps)} clap(s) audio · mains : {an.hands_status}")
+                             f"{len(an.shots)} plan(s) · {len(an.claps)} clap(s)/bip(s) · piste audio {an.settings.audio_track + 1}")
         if not an.claps:
             QMessageBox.information(self, "SyncLive",
-                                    "Aucun clap détecté dans l'audio. Vérifie la piste audio ou augmente la sensibilité.")
+                                    "Aucun clap ni bip détecté, sur aucune piste audio de la vidéo. Vérifie que le son a bien été enregistré (claps nets, ou mire SyncLive avec le son activé).")
         self.refresh()
 
     # --- affichage & édition ----------------------------------------------------
@@ -412,7 +407,7 @@ class MainWindow(QMainWindow):
                 it = QTableWidgetItem(txt)
                 it.setFlags(Qt.ItemIsEnabled)
                 self.shots_table.setItem(r, col, it)
-            cb = QComboBox()
+            cb = NoWheelComboBox()
             for cid, nm in names.items():
                 cb.addItem(nm, cid)
             cb.addItem("Nouvelle source", -1)
@@ -439,7 +434,7 @@ class MainWindow(QMainWindow):
                 if c.selected is None:
                     it.setForeground(Qt.gray)
                 self.claps_table.setItem(r, col, it)
-            cb = QComboBox()
+            cb = NoWheelComboBox()
             cb.addItem("auto (cohérence)" if c.candidates else "aucun événement visible", None)
             for j, v in enumerate(c.candidates):
                 mark = "   (retenu)" if c.selected is v else ""
@@ -474,7 +469,10 @@ class MainWindow(QMainWindow):
             f"Composants tiers (FFmpeg, x264, Qt, MediaPipe, OpenCV…) : {lic_link}.</p>")
         box.setTextInteractionFlags(Qt.TextBrowserInteraction)
         box.setStandardButtons(QMessageBox.Ok)
+        check = box.addButton("Rechercher les mises à jour", QMessageBox.ActionRole)
         box.exec()
+        if box.clickedButton() is check:
+            self.update_banner.check(manual=True)
 
     def _plan_box(self, plan: export.CorrectionPlan) -> QWidget:
         """Plan global : le son se décale une seule fois pour tout le mix, puis chaque image
@@ -493,7 +491,7 @@ class MainWindow(QMainWindow):
         audio.setStyleSheet("font-size:16px; font-weight:600; background:transparent;")
         audio.setWordWrap(True)
         g.addWidget(audio, 1, 0, 1, 4)
-        heads = ["Source", "Constat (qui est en retard)", "À faire sur l'image de cette source", "Écart restant"]
+        heads = ["Source", "Constat (qui est en retard)", "Retard à mettre sur l'image", "Reste après correction"]
         for c, h in enumerate(heads):
             lab = QLabel(h)
             lab.setStyleSheet("color:#8A8780; background:transparent; padding-top:8px;")
@@ -520,7 +518,8 @@ class MainWindow(QMainWindow):
         note = QLabel("Le son est commun à toutes les sources : on ne peut que le retarder, une seule fois, de la "
                       "plus grande avance mesurée. Ensuite chaque source d'image reçoit le retard qui lui manque, "
                       f"en images entières à {self.an.info.fps_label} i/s (OBS : filtre « Délai de rendu », en ms). "
-                      "Écart restant : ce qui subsiste après arrondi à l'image (+ = son encore en retard).")
+                      "Reste après correction : l'image ne se décale que par images entières (1 img = "
+                      f"{round(1000 / fps)} ms), il reste donc ce petit décalage, invisible sous une demi-image.")
         note.setWordWrap(True)
         note.setStyleSheet("color:#8A8780; background:transparent; padding-top:8px;")
         g.addWidget(note, len(plan.fixes) + 3, 0, 1, 4)
@@ -530,24 +529,48 @@ class MainWindow(QMainWindow):
     def refresh_later(self) -> None:
         QTimer.singleShot(0, self.refresh)
 
+    # --- annulation ------------------------------------------------------------
+    def _snapshot(self) -> None:
+        an = self.an
+        self._undo.append(([s.camera for s in an.shots], dict(an.camera_names),
+                           [(c.excluded, c.forced) for c in an.claps]))
+        del self._undo[:-50]
+        self.undo_btn.setEnabled(True)
+
+    def undo(self) -> None:
+        if not (self.an and self._undo):
+            return
+        cams, names, claps = self._undo.pop()
+        for s, c in zip(self.an.shots, cams):
+            s.camera = c
+        self.an.camera_names = names
+        for c, (ex, fo) in zip(self.an.claps, claps):
+            c.excluded, c.forced = ex, fo
+        self.undo_btn.setEnabled(bool(self._undo))
+        self.refresh_later()
+
     def _rename(self, cid: int, name: str) -> None:
         if self.an and self.an.camera_names.get(cid) != name:
+            self._snapshot()
             self.an.camera_names[cid] = name
             self.refresh_later()
 
     def _merge(self, src: int, dst: int) -> None:
         if self.an:
+            self._snapshot()
             self.an.merge_cameras(src, dst)
             self.refresh_later()
 
     def _move_shot(self, shot: int, cid) -> None:
         if self.an is None or cid == self.an.shots[shot].camera:
             return
+        self._snapshot()
         self.an.move_shot(shot, None if cid == -1 else cid)
         self.refresh_later()
 
     def _force(self, clap_id: int, cand) -> None:
         if self.an is not None:
+            self._snapshot()
             self.an.claps[clap_id].forced = cand
             self.refresh_later()
 
@@ -555,6 +578,7 @@ class MainWindow(QMainWindow):
         if self.an is None or item.column() != 0:
             return
         cid = item.data(Qt.UserRole)
+        self._snapshot()
         self.an.claps[cid].excluded = item.checkState() != Qt.Checked
         self.refresh_later()
 

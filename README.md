@@ -53,21 +53,37 @@ l'écart restant après arrondi.
 - Règle −15…+15 images pour une lecture à l'œil.
 - Boucle sans couture, en MP4 (H.264 + AAC) ou MOV (H.264 + PCM 24 bits).
 
+**Multiview maison**
+- Une mosaïque de caméras bord à bord, sans séparateur, est découpée automatiquement en vignettes :
+  chaque vignette devient une source. Un seul clap vu par toutes les caméras donne le décalage de
+  chacune ; claps et bips de mire peuvent se suivre dans la même bande son.
+
 **Partage réseau**
 - SyncLive affiche un lien et un QR code. Chaque machine ouvre le lien dans son navigateur, reçoit
   son identifiant, puis lance la boucle en plein écran ou télécharge le MP4. Aucune installation.
+- Le n° de chaque machine se change à distance, directement sur sa ligne.
+
+**Sans réglage, à jour tout seul**
+- Aucun réglage : piste audio et sensibilité sont choisies automatiquement.
+- Au démarrage, SyncLive vérifie la dernière version publiée et propose la mise à jour
+  (téléchargement, contrôle SHA-256, installation et redémarrage automatiques).
 
 <p align="center"><img src="docs/mire.png" alt="Mire SyncLive" width="900"></p>
 <p align="center"><img src="docs/app-mires.png" alt="Onglet Mires" width="900"></p>
 
 ## Installation
 
-Windows 10/11, Python 3.11.
+**Utilisateurs** : télécharger `SyncLive-<version>-windows-x64.zip` depuis la
+[dernière release](https://github.com/ElementV2/synclive/releases/latest), extraire, lancer
+`SyncLive.exe`. Rien d'autre à installer. Historique : [CHANGELOG.md](CHANGELOG.md).
+
+**Développement** : Windows 10/11, Python 3.11.
 
 ```bat
 python -m venv .venv
 .venv\Scripts\pip install -r requirements-dev.txt
 .venv\Scripts\python main.py
+dev.bat                       :: mode dev : l'interface se relance à chaque modification du code
 ```
 
 Exécutable autonome (`dist\SyncLive\SyncLive.exe`) :
@@ -126,9 +142,13 @@ partage réseau ; plan de correction.
 | `synclive/export.py` | plan de correction, images annotées, rapports |
 | `synclive/pattern.py` | générateur de mires |
 | `synclive/server.py` | partage réseau |
+| `synclive/multiview.py` | découpe des mosaïques en vignettes |
+| `synclive/updater.py`, `synclive/ui_update.py` | mises à jour depuis les releases GitHub |
 | `synclive/ui.py`, `synclive/ui_pattern.py` | interface (PySide6) |
 
 ## Distribuer une version
+
+Procédure complète et conventions indispensables à la mise à jour automatique : [RELEASING.md](RELEASING.md).
 
 ```bat
 release.bat

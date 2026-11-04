@@ -22,7 +22,7 @@ from .media import GRID_COLS, GRID_ROWS, MotionScan
 from .shots import Shot
 
 MIN_PEAK = 2.0        # énergie minimale (niveaux de gris moyens / 255) d'un vrai événement
-MAX_CELLS = 8
+MAX_CELLS = 32          # grille 32x18 : 4 fois plus de cellules qu en 16x9
 DROP = 0.55           # seuil de retombée du mouvement (fraction du pic) = fin du clap
 
 
@@ -61,6 +61,15 @@ class ShotSignal:
             self.base = np.median(self.cells[1:], axis=0)
         else:
             self.base = np.zeros(self.cells.shape[1], np.float32)
+        # cellules dont le centre est dans la vignette (multiview) ; tout l'écran sinon
+        x0, y0, x1, y1 = getattr(shot, "region", (0.0, 0.0, 1.0, 1.0))
+        cy = (np.arange(GRID_ROWS) + 0.5) / GRID_ROWS
+        cx = (np.arange(GRID_COLS) + 0.5) / GRID_COLS
+        self.region_mask = ((cy[:, None] >= y0) & (cy[:, None] < y1) &
+                            (cx[None, :] >= x0) & (cx[None, :] < x1)).reshape(-1)
+        th, tw = scan.thumbs.shape[1:3]
+        self.ty = slice(int(round(y0 * th)), max(int(round(y0 * th)) + 1, int(round(y1 * th))))
+        self.tx = slice(int(round(x0 * tw)), max(int(round(x0 * tw)) + 1, int(round(x1 * tw))))
 
     def window(self, t_audio: float, half: float) -> tuple[int, int]:
         lo = max(1, int(np.searchsorted(self.t, t_audio - half)) - 1)
@@ -74,7 +83,7 @@ class ShotSignal:
             return np.zeros(0), lo, hi
         seg = self.cells[lo:hi + 1] - self.base[None, :]
         peak = seg.max(axis=0)
-        score = peak / (self.base + 2.0)
+        score = np.where(self.region_mask, peak / (self.base + 2.0), 0.0)
         if mask is not None:
             m = mask.reshape(-1)
             if (score[m] > 0.5 * score.max()).sum() >= 1:
@@ -88,10 +97,10 @@ class ShotSignal:
         return e, lo, hi
 
 
-def _flash_hue(scan: MotionScan, k: int, region: np.ndarray) -> float | None:
+def _flash_hue(thumbs: np.ndarray, k: int, region: np.ndarray) -> float | None:
     if region.sum() < 2:
         return None
-    rgb = scan.thumbs[k][region].astype(np.float64).mean(axis=0) / 255.0
+    rgb = thumbs[k][region].astype(np.float64).mean(axis=0) / 255.0
     h, s, v = colorsys.rgb_to_hsv(*rgb)
     return float(h) if s > 0.35 and v > 0.25 else None
 
@@ -101,7 +110,7 @@ def flash_candidates(sig: ShotSignal, t_audio: float, window: float) -> list[Vis
     Un objet qui se déplace (curseur de mire, mains) ne « revient » pas ; un flash, si."""
     scan, shot = sig.scan, sig.shot
     lo, hi = sig.window(t_audio, window)
-    th = scan.thumbs
+    th = scan.thumbs[:, sig.ty, sig.tx]        # vignette seulement (multiview)
     imp = np.zeros(hi - lo + 1)
     regions = {}
     for j, k in enumerate(range(shot.i0 + lo, shot.i0 + hi + 1)):
@@ -134,7 +143,7 @@ def flash_candidates(sig: ShotSignal, t_audio: float, window: float) -> list[Vis
         if imp[j] >= 0.3 * peak and (j == 0 or imp[j - 1] < 0.3 * peak):
             k = shot.i0 + lo + j
             out.append(VisualCandidate(t=float(scan.times[k]), strength=float(imp[j] / peak),
-                                       kind="flash", hue=_flash_hue(scan, k, regions[j])))
+                                       kind="flash", hue=_flash_hue(th, k, regions[j])))
     return [c for c in out if abs(c.t - t_audio) <= window]
 
 

@@ -98,6 +98,7 @@ def make(path: str, fps: Fraction, offsets: dict[str, float], order: list[str],
     vs = out.add_stream("libx264", rate=fps)
     vs.width, vs.height, vs.pix_fmt = W, H, "yuv420p"
     vs.options = {"crf": "20", "preset": "veryfast"}
+    silent = None
     as_ = out.add_stream(audio_codec, rate=SR)
     as_.layout = "mono"
 
@@ -126,8 +127,18 @@ def make(path: str, fps: Fraction, offsets: dict[str, float], order: list[str],
         af.time_base = Fraction(1, SR)
         for p in as_.encode(af):
             out.mux(p)
+        if silent is not None:
+            zf = av.AudioFrame.from_ndarray(np.zeros_like(a16[None, i:i + 1024]), format="s16", layout="mono")
+            zf.sample_rate = SR
+            zf.pts = i
+            zf.time_base = Fraction(1, SR)
+            for p in silent.encode(zf):
+                out.mux(p)
     for p in as_.encode():
         out.mux(p)
+    if silent is not None:
+        for p in silent.encode():
+            out.mux(p)
     out.close()
     return truth
 
@@ -141,7 +152,7 @@ if __name__ == "__main__":
 
 
 def make_pattern_capture(path: str, fps: Fraction, segments: list[tuple[int, float, float]],
-                         size: tuple[int, int] = (640, 360)) -> None:
+                         size: tuple[int, int] = (640, 360), silent_first_track: bool = False) -> None:
     """Capture simulée de mires SyncLive : segments = [(source, délai_son_s, durée_s)].
     Deux segments de même source = même image, latence éventuellement différente."""
     import sys as _s
@@ -156,6 +167,10 @@ def make_pattern_capture(path: str, fps: Fraction, segments: list[tuple[int, flo
     vs = out.add_stream("libx264", rate=fps)
     vs.width, vs.height, vs.pix_fmt = size[0], size[1], "yuv420p"
     vs.options = {"crf": "20", "preset": "veryfast"}
+    silent = None
+    if silent_first_track:          # piste 1 muette (micro coupé), le son utile est sur la piste 2
+        silent = out.add_stream("pcm_s16le", rate=SR)
+        silent.layout = "mono"
     as_ = out.add_stream("pcm_s16le", rate=SR)
     as_.layout = "mono"
     total = sum(d for _, _, d in segments)
@@ -194,6 +209,90 @@ def make_pattern_capture(path: str, fps: Fraction, segments: list[tuple[int, flo
         af.sample_rate = SR
         af.pts = i
         af.time_base = Fraction(1, SR)
+        for p in as_.encode(af):
+            out.mux(p)
+        if silent is not None:
+            zf = av.AudioFrame.from_ndarray(np.zeros_like(a16[None, i:i + 1024]), format="s16", layout="mono")
+            zf.sample_rate = SR
+            zf.pts = i
+            zf.time_base = Fraction(1, SR)
+            for p in silent.encode(zf):
+                out.mux(p)
+    for p in as_.encode():
+        out.mux(p)
+    if silent is not None:
+        for p in silent.encode():
+            out.mux(p)
+    out.close()
+
+
+def make_multiview(path: str, fps: Fraction, cam_latency: list[float], mire_delay: float,
+                   mire_source: int = 3, tile: tuple[int, int] = (320, 180)) -> None:
+    """Multiview maison 2x2 bord à bord : 3 caméras (claps) + 1 mire SyncLive.
+
+    Comme en vrai : l'image de tout le monde est visible en même temps ; le son contient d'abord
+    les claps (vus par toutes les caméras au même instant physique), puis le son de la mire.
+    Caméra i : son clap visible à tc + latence_i -> décalage attendu = -latence_i.
+    Mire : bip à flash + mire_delay -> décalage attendu = +mire_delay."""
+    import cv2 as _cv2
+    import sys as _s
+    from pathlib import Path as _P
+    _s.path.insert(0, str(_P(__file__).resolve().parent.parent))
+    from synclive import pattern as P
+
+    TW, TH = tile
+    T = 1 / float(fps)
+    total = 7.0
+    contacts = [0.8, 1.9, 3.0]                       # claps (temps physique)
+    bgs = [background(10 + i) for i in range(3)]
+    centers = [260, 320, 380]
+    rnd = P._Renderer(P.PatternSpec(TW, TH, fps, source=mire_source))
+    N = int(round(float(fps)))
+    bases = [rnd.base(i) for i in range(N)]
+
+    out = av.open(path, "w")
+    vs = out.add_stream("libx264", rate=fps)
+    vs.width, vs.height, vs.pix_fmt = TW * 2, TH * 2, "yuv420p"
+    vs.options = {"crf": "18", "preset": "veryfast"}
+    as_ = out.add_stream("pcm_s16le", rate=SR)
+    as_.layout = "mono"
+    n = int(round(total * float(fps)))
+    rng = np.random.default_rng(5)
+    audio = rng.normal(0, 0.002, int(total * SR) + SR)
+    for tc in contacts:                              # claps : bruit large bande
+        i0 = int(round(tc * SR))
+        L = int(0.12 * SR)
+        tt = np.arange(L) / SR
+        audio[i0:i0 + L] += 0.6 * rng.normal(0, 1, L) * np.exp(-tt / 0.012) * np.minimum(1, tt / 0.0005)
+    for k in range(n):
+        t = k * T
+        canvas = np.zeros((TH * 2, TW * 2, 3), np.uint8)
+        for i in range(3):
+            tl = t - cam_latency[i]                  # la caméra i montre l'instant t - latence
+            acc = np.zeros((360, 640, 3), np.float32)
+            for sub in np.linspace(-T / 4, T / 4, 4):
+                acc += render(bgs[i], hand_gap(tl + sub, contacts), centers[i])
+            img = np.clip(acc / 4 + rng.normal(0, 2.0, (360, 640, 1)), 0, 255).astype(np.uint8)
+            r, c = divmod(i, 2)
+            canvas[r * TH:(r + 1) * TH, c * TW:(c + 1) * TW] = _cv2.resize(img, (TW, TH), interpolation=_cv2.INTER_AREA)
+        j = k + 5                                    # mire (phase quelconque)
+        i_m, cyc = j % N, ((j + N // 2) // N) % P.CYCLE
+        canvas[TH:, TW:] = rnd.decorate(bases[i_m], cyc)
+        if i_m == 0 and t > 3.6:                     # son de la mire, après les claps
+            i0 = int(round((t + mire_delay) * SR))
+            b = P._beep(int(0.12 * SR), cyc)
+            seg = audio[i0:i0 + b.size]
+            seg += b[: seg.size]
+        fr = av.VideoFrame.from_ndarray(canvas, format="rgb24")
+        fr.pts, fr.time_base = k, Fraction(1, 1) / fps
+        for p in vs.encode(fr):
+            out.mux(p)
+    for p in vs.encode():
+        out.mux(p)
+    a16 = (np.clip(audio[: int(n * T * SR)], -1, 1) * 32767).astype(np.int16)
+    for i in range(0, a16.size, 1024):
+        af = av.AudioFrame.from_ndarray(a16[None, i:i + 1024], format="s16", layout="mono")
+        af.sample_rate, af.pts, af.time_base = SR, i, Fraction(1, SR)
         for p in as_.encode(af):
             out.mux(p)
     for p in as_.encode():

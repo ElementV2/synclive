@@ -18,7 +18,7 @@ ProgressCb = Callable[[float], None]
 
 # Résolution de travail pour l'analyse de mouvement (grille de 16x9 cellules de 20x20 px)
 MOTION_W, MOTION_H = 320, 180
-GRID_COLS, GRID_ROWS = 16, 9
+GRID_COLS, GRID_ROWS = 32, 18   # cellules de 10x10 px, assez fines pour les vignettes de multiview
 THUMB_W, THUMB_H = 48, 27
 
 
@@ -47,10 +47,12 @@ class VideoInfo:
 @dataclass
 class MotionScan:
     times: np.ndarray       # (n,) temps de présentation de chaque image
-    cells: np.ndarray       # (n, 9, 16) mouvement moyen par cellule entre image k-1 et k
+    cells: np.ndarray       # (n, 18, 32) mouvement moyen par cellule entre image k-1 et k
     thumbs: np.ndarray      # (n, 27, 48, 3) vignettes couleur pour coupes/regroupement
     frac_moving: np.ndarray # (n,) fraction de cellules en mouvement
     thumb_diff: np.ndarray  # (n,) différence moyenne de vignette avec l'image précédente
+    sample_idx: np.ndarray | None = None   # (m,) indices des images échantillonnées
+    samples: np.ndarray | None = None      # (m, 180, 320) niveaux de gris (détection des vignettes)
 
 
 def probe(path: str) -> VideoInfo:
@@ -130,6 +132,9 @@ def scan_video(path: str, info: VideoInfo, progress: ProgressCb | None = None,
     prev_gray = None
     prev_thumb = None
     period = 1.0 / info.fps_float
+    every = max(1, int(info.duration * info.fps_float / 200))   # ~200 images pour la mosaïque
+    samples: list[np.ndarray] = []
+    sample_idx: list[int] = []
     with av.open(path) as c:
         vs = c.streams.video[0]
         vs.thread_type = "AUTO"
@@ -158,6 +163,9 @@ def scan_video(path: str, info: VideoInfo, progress: ProgressCb | None = None,
             tdiffs.append(tdiff)
             prev_gray = gray
             prev_thumb = thumb.astype(np.int16)
+            if idx % every == 0:
+                samples.append(gray.astype(np.uint8))
+                sample_idx.append(idx)
             idx += 1
             if progress and info.duration > 0 and idx % 15 == 0:
                 progress(min(1.0, (t - times[0]) / info.duration))
@@ -170,6 +178,8 @@ def scan_video(path: str, info: VideoInfo, progress: ProgressCb | None = None,
         thumbs=np.stack(thumbs)[order],
         frac_moving=np.asarray(fracs, np.float32)[order],
         thumb_diff=np.asarray(tdiffs, np.float32)[order],
+        sample_idx=np.argsort(order)[np.asarray(sample_idx, int)] if sample_idx else None,
+        samples=np.stack(samples) if samples else None,
     )
 
 

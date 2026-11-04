@@ -54,6 +54,7 @@ class Registry:
         self.lock = threading.Lock()
         self.by_client: dict[str, int] = {}
         self.info: dict[int, dict] = {}
+        self.pending: dict[int, int] = {}      # n° actuel -> n° demandé depuis la régie
 
     def assign(self, client: str, want: int | None, ip: str, ua: str) -> int:
         with self.lock:
@@ -69,16 +70,29 @@ class Registry:
                 used = set(self.by_client.values())
                 sid = next(i for i in range(1, pattern.MAX_SOURCES + 1) if i not in used)
             self.by_client[client] = sid
+            self.pending = {k: v for k, v in self.pending.items() if v != sid}
             self.info[sid] = {"id": sid, "label": pattern.source_label(sid), "ip": ip,
                               "agent": _short_agent(ua), "seen": time.time(), "playing": None}
             return sid
 
-    def touch(self, sid: int, playing: str | None = None) -> None:
+    def touch(self, sid: int, playing: str | None = None) -> int | None:
+        """Signe de vie d'une machine ; renvoie le nouveau n° si la régie l'a changé."""
         with self.lock:
             if sid in self.info:
                 self.info[sid]["seen"] = time.time()
                 if playing is not None:
-                    self.info[sid]["playing"] = playing
+                    self.info[sid]["playing"] = playing or None
+            return self.pending.get(sid)
+
+    def renumber(self, old: int, new: int) -> None:
+        """Changement de n° demandé depuis la régie. Si le n° est déjà pris, les deux machines
+        échangent leur n°. Chaque machine l'applique à son prochain signe de vie (≤ 3 s)."""
+        with self.lock:
+            if old == new or not (1 <= new <= pattern.MAX_SOURCES):
+                return
+            self.pending[old] = new
+            if new in self.by_client.values():
+                self.pending[new] = old
 
     def clients(self) -> list[dict]:
         with self.lock:
@@ -198,9 +212,10 @@ class _Handler(BaseHTTPRequestHandler):
                                           self.client_address[0], self.headers.get("User-Agent", ""))
                 self._json({"id": sid, "label": pattern.source_label(sid), "name": pattern.source_name(sid)})
             elif u.path == "/api/ping":
+                new = None
                 if q.get("id", "").isdigit():
-                    srv.registry.touch(int(q["id"]), q.get("playing"))
-                self._json({"ok": True})
+                    new = srv.registry.touch(int(q["id"]), q.get("playing"))
+                self._json({"ok": True, "reassign": new})
             elif u.path == "/api/clients":
                 self._json(srv.registry.clients())
             elif RES_RE.match(u.path):
@@ -314,11 +329,14 @@ async function init(){cfg=await (await fetch('/api/config')).json();
  $('#res').value=best;cfg.fps.forEach(f=>{const o=document.createElement('option');o.value=f;o.textContent=f;$('#fps').append(o)});$('#fps').value='60';
  $('#res').onchange=$('#fps').onchange=upd;
  const p=new URLSearchParams(location.search);let want=+p.get('id')||0;if(!want){try{want=+localStorage.getItem('sl_id')||0}catch(e){}}
- await hello(want);setInterval(()=>fetch(`/api/ping?id=${me.id}`),5000)}
+ await hello(want);setInterval(ping,3000)}
+const playing=()=>$('#stage').style.display==='block';
+async function ping(){try{const r=await (await fetch(`/api/ping?id=${me.id}&playing=${playing()?encodeURIComponent($('#fps').value+' i/s'):''}`)).json();
+ if(r.reassign){await hello(r.reassign);if(playing()){const v=$('#v');v.src=src(false);v.play()}}}catch(e){}}
 $('#prev').onclick=()=>hello(Math.max(1,me.id-1));$('#next').onclick=()=>hello(Math.min(cfg.max,me.id+1));
 $('#play').onclick=async()=>{const v=$('#v');$('#wait').style.display='grid';
  v.oncanplay=()=>{v.oncanplay=null;$('#wait').style.display='none';$('#stage').style.display='block';v.play();
-  fetch(`/api/ping?id=${me.id}&playing=${encodeURIComponent($('#fps').value+' i/s')}`)};
+  ping()};
  v.src=src(false);await document.documentElement.requestFullscreen().catch(()=>{})};
 function stop(){const v=$('#v');v.pause();$('#stage').style.display='none';$('#wait').style.display='none';if(document.fullscreenElement)document.exitFullscreen()}
 $('#stage').onclick=stop;document.addEventListener('fullscreenchange',()=>{if(!document.fullscreenElement)stop()});

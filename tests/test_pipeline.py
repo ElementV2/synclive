@@ -114,6 +114,11 @@ def test_lan_server_assigns_ids_and_serves_loops(tmp_path):
         a, b = get("/api/hello?client=A"), get("/api/hello?client=B")
         assert (a["id"], b["id"]) == (1, 2) and get("/api/hello?client=A")["id"] == 1
         assert get("/api/hello?client=C&want=42")["label"] == "42 · GRIZZLY"
+        # renumérotation depuis la régie : A (01) passe en 02 -> échange avec B
+        srv.registry.renumber(1, 2)
+        assert get("/api/ping?id=1")["reassign"] == 2 and get("/api/ping?id=2")["reassign"] == 1
+        assert get("/api/hello?client=A&want=2")["id"] == 2 and get("/api/hello?client=B&want=1")["id"] == 1
+        assert get("/api/ping?id=2")["reassign"] is None
         req = urllib.request.Request(base + "/loop/2/640x360/25.mp4", headers={"Range": "bytes=0-9"})
         r = urllib.request.urlopen(req)
         assert r.status == 206 and len(r.read()) == 10
@@ -156,3 +161,51 @@ def test_correction_plan_global_audio_then_per_source_frame_delay():
     # son en retard partout : on ne touche pas au son, chaque image est retardée de son décalage
     plan2 = correction_plan([SimpleNamespace(id=0, name="X", offset=0.080)], fps=25.0)
     assert plan2.audio_delay == 0 and plan2.fixes[0].frames == 2
+
+
+def test_no_settings_needed_audio_on_second_track(tmp_path):
+    """Aucun réglage : la 1re piste audio est muette, SyncLive trouve tout seul la bonne piste."""
+    vid = tmp_path / "pistes.mkv"
+    make_pattern_capture(str(vid), Fraction(25), [(6, 0.120, 8)], silent_first_track=True)
+    an = analysis.run(str(vid))                       # réglages par défaut, comme dans l'interface
+    assert an.settings.audio_track == 1
+    cams = an.cameras()
+    assert [c.name for c in cams] == ["06 · LYNX"] and abs(cams[0].offset - 0.120) < 0.003
+
+
+def test_homemade_multiview_claps_then_mire(tmp_path):
+    """Multiview maison 2x2 bord à bord : 3 caméras + 1 mire, d'abord les claps puis le son de la mire."""
+    from synth import make_multiview
+    vid = tmp_path / "mv.mkv"
+    make_multiview(str(vid), Fraction(25), cam_latency=[0.100, 0.180, 0.040], mire_delay=0.120)
+    an = analysis.run(str(vid), analysis.Settings(use_hands=False))
+    tiles = sorted({s.tile for s in an.shots})
+    assert len(tiles) == 4, tiles
+    by_tile = {c.tile: c for c in an.cameras()}
+    expected = {"vignette haut gauche": -100, "vignette haut droite": -180,
+                "vignette bas gauche": -40, "vignette bas droite": 120}
+    got = {t: (None if c.offset is None else round(c.offset * 1000), c.kind) for t, c in by_tile.items()}
+    for t, exp in expected.items():
+        off, kind = got[t]
+        assert off is not None and abs(off - exp) <= 0.5 * 40, got   # ½ image à 25 i/s
+        assert kind == ("mire" if t.endswith("bas droite") else "camera"), got
+
+
+@pytest.mark.parametrize("beep_ms", [30, 120, 300])
+def test_other_brand_beeps_short_and_long(beep_ms):
+    """Mires d'autres marques : bips courts ou longs (note tenue), début mesuré à la ms près."""
+    import numpy as np
+    from synclive import audio_claps
+    sr = 48000
+    sig = np.random.default_rng(0).normal(0, 0.002, sr * 6).astype(np.float32)
+    onsets = [1.0, 2.001, 3.002, 4.003]
+    n = int(beep_ms / 1000 * sr)
+    t = np.arange(n) / sr
+    tone = 0.5 * np.sin(2 * np.pi * 1000 * t) * np.minimum(1, t / 0.001) * np.minimum(1, (t[::-1]) / 0.002)
+    for o in onsets:
+        i = int(o * sr)
+        sig[i:i + n] += tone.astype(np.float32)
+    got = audio_claps.detect_claps(sig, sr, 0.0)
+    assert len(got) == 4, [round(c.t, 3) for c in got]
+    for c, o in zip(got, onsets):
+        assert abs(c.t - o) < 0.002 and c.freq is not None and abs(c.freq - 1000) < 30
