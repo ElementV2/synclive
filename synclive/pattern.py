@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Générateur de mires de synchro audio/vidéo SyncLive.
 
 Principe : toutes les « périodes » (≈ 1 s, exactement round(fps) images) une image unique

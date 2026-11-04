@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Détection des claps dans l'audio, précision ~1 ms.
 
 Un clap = transitoire très bref, riche en aigus : montée < 10 ms, décroissance rapide.

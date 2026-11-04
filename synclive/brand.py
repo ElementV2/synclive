@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Charte SyncLive (logo 05C « Peak ») et accès aux fichiers de marque."""
 from __future__ import annotations
 

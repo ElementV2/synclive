@@ -1,0 +1,23 @@
+SyncLive — code source correspondant
+=====================================
+
+SyncLive est un logiciel libre distribué sous GNU GPL version 3 ou ultérieure (voir LICENSE.txt).
+
+Code source de SyncLive
+  Chaque version de l'exécutable est publiée avec l'archive de son code source complet :
+  SyncLive-<version>-source.zip, au même endroit que l'exécutable.
+  Dépôt : https://github.com/ElementV2/synclive
+
+Composants tiers (FFmpeg, x264, x265, Qt…)
+  Leur licence et l'adresse de leurs sources sont listées dans licenses/ et
+  THIRD_PARTY_NOTICES.md. Les DLL FFmpeg proviennent des binaires officiels de PyAV,
+  compilés par https://github.com/PyAV-Org/pyav-ffmpeg.
+
+Offre écrite
+  Pendant au moins trois ans après la distribution de cette version, le code source
+  correspondant complet de cet exécutable, y compris celui des composants GPL qu'il contient,
+  est fourni sur simple demande, gratuitement (hors éventuels frais de support physique),
+  via https://github.com/ElementV2.
+
+Qt (PySide6) est utilisé sous LGPL-3.0 : ses bibliothèques sont livrées sous forme de DLL
+séparées dans _internal/ et peuvent être remplacées par une autre version compatible.

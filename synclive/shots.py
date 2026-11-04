@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Découpe en plans et regroupement des plans par caméra."""
 from __future__ import annotations
 

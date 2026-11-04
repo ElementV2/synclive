@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Évalue la précision sur vidéos synthétiques : python tests/eval_synth.py <dossier>"""
 import sys
 from fractions import Fraction

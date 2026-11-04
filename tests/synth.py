@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Génère une vidéo multicam synthétique avec claps et décalages connus.
 
 Chaque « caméra » a son propre décor ; deux blocs couleur peau (les mains) se

@@ -14,6 +14,8 @@ et restent soumis à leur propre licence.
 | [Pillow](https://python-pillow.org) | images | MIT-CMU |
 | Police *Unbounded* (logo, vectorisée dans les SVG) | identité visuelle | SIL OFL 1.1 |
 
-Les binaires FFmpeg fournis avec PyAV sont compilés avec x264 (GPL). Avant de **redistribuer
-l'exécutable** produit par `build.bat`, vérifier les obligations de ces licences (mise à disposition
-des sources, mentions, etc.).
+Les binaires FFmpeg fournis avec PyAV sont compilés avec x264 et x265 (GPL) et opencore-amr
+(Apache-2.0) : l'exécutable est donc distribué sous **GNU GPL version 3**, comme SyncLive
+(voir `LICENSE`). `release.bat` livre avec l'exécutable le dossier `licenses/` (textes de licence
+de chaque composant), `SOURCE.txt` (offre de code source) et l'archive des sources de SyncLive.
+Le détail des bibliothèques FFmpeg embarquées est dans `licenses/FFmpeg-components.md`.

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Export : une image annotée par caméra, planche récapitulative, CSV et JSON."""
 from __future__ import annotations
 

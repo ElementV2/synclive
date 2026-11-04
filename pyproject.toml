@@ -3,6 +3,9 @@ name = "synclive"
 version = "1.0.0"
 description = "Mesure du décalage son/image par source (caméras, PC, consoles) et mires de synchro."
 readme = "README.md"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
+authors = [{ name = "ElementV2" }]
 requires-python = ">=3.11"
 dependencies = [
     "numpy>=2.0",
@@ -13,6 +16,9 @@ dependencies = [
     "pillow>=10",
     "mediapipe>=0.10.20",
 ]
+
+[project.urls]
+Repository = "https://github.com/ElementV2/synclive"
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "pyinstaller>=6"]

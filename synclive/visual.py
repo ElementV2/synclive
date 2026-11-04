@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Instant de l'événement visuel associé à un son.
 
 Deux types d'événements :

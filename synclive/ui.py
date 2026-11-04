@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Interface desktop SyncLive (PySide6)."""
 from __future__ import annotations
 
@@ -211,11 +212,20 @@ class MainWindow(QMainWindow):
         self.setWindowIcon(QIcon(str(brand.asset("app-icon-256.png"))))
         self.main_tabs = QTabWidget()
         self.setCentralWidget(self.main_tabs)
+        corner = QWidget()
+        cl = QHBoxLayout(corner)
+        cl.setContentsMargins(8, 4, 18, 4)
+        cl.setSpacing(14)
+        about = QPushButton("À propos")
+        about.setStyleSheet("QPushButton { background: transparent; border: none; color: #8A8780; padding: 4px; }"
+                            "QPushButton:hover { color: #F2F0EB; }")
+        about.clicked.connect(self.show_about)
         logo = QLabel()
         logo.setPixmap(svg_pixmap(brand.asset("lockup-dark-bg.svg"), 24))
         logo.setStyleSheet("background: transparent;")
-        logo.setContentsMargins(12, 8, 18, 8)
-        self.main_tabs.setCornerWidget(logo, Qt.TopRightCorner)
+        cl.addWidget(about)
+        cl.addWidget(logo)
+        self.main_tabs.setCornerWidget(corner, Qt.TopRightCorner)
         root = QWidget()
         self.main_tabs.addTab(root, "Analyse")
         self.pattern_page = PatternPage()
@@ -438,6 +448,33 @@ class MainWindow(QMainWindow):
             cb.activated.connect(lambda i, cid=c.id, box=cb: self._force(cid, box.itemData(i)))
             self.claps_table.setCellWidget(r, 4, cb)
         self.claps_table.blockSignals(False)
+
+    def show_about(self) -> None:
+        """Mentions légales (GPL-3.0, section 0 : « Appropriate Legal Notices »)."""
+        import synclive
+        lic_dir = Path(sys.executable).parent / "licenses" if getattr(sys, "frozen", False) else None
+        lic_link = (f"<a href='{QUrl.fromLocalFile(str(lic_dir)).toString()}' style='color:#FF5A1F'>"
+                    f"licences des composants tiers</a>" if lic_dir and lic_dir.exists()
+                    else "licences des composants tiers : THIRD_PARTY_NOTICES.md")
+        box = QMessageBox(self)
+        box.setWindowTitle("À propos de SyncLive")
+        box.setIconPixmap(svg_pixmap(brand.asset("lockup-dark-bg.svg"), 40))
+        box.setTextFormat(Qt.RichText)
+        box.setText(
+            f"<p><b>SyncLive {synclive.__version__}</b><br>{synclive.__copyright__}</p>"
+            "<p>Ce programme est un logiciel libre : vous pouvez le redistribuer et/ou le modifier selon les "
+            "termes de la <b>GNU General Public License version 3</b> ou (à votre choix) toute version "
+            "ultérieure, telle que publiée par la Free Software Foundation.</p>"
+            "<p>Ce programme est distribué dans l'espoir qu'il sera utile, mais <b>SANS AUCUNE GARANTIE</b>, "
+            "sans même la garantie implicite de qualité marchande ou d'adéquation à un usage particulier. "
+            "Voir la licence pour plus de détails : "
+            "<a href='https://www.gnu.org/licenses/gpl-3.0.html' style='color:#FF5A1F'>gnu.org/licenses/gpl-3.0</a>.</p>"
+            f"<p>Code source : <a href='{synclive.__url__}' style='color:#FF5A1F'>{synclive.__url__}</a> "
+            "(et archive <i>SyncLive-version-source.zip</i> fournie avec chaque version).<br>"
+            f"Composants tiers (FFmpeg, x264, Qt, MediaPipe, OpenCV…) : {lic_link}.</p>")
+        box.setTextInteractionFlags(Qt.TextBrowserInteraction)
+        box.setStandardButtons(QMessageBox.Ok)
+        box.exec()
 
     def _plan_box(self, plan: export.CorrectionPlan) -> QWidget:
         """Plan global : le son se décale une seule fois pour tout le mix, puis chaque image

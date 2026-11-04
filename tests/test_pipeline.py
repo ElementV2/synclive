@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Tests de bout en bout sur vidéos synthétiques à décalages connus."""
 from fractions import Fraction
 from pathlib import Path

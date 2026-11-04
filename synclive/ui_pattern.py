@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Onglet « Générer des mires » : boucles de synchro SyncLive dans tous les formats."""
 from __future__ import annotations
 

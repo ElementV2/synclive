@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Usage : python -m synclive.cli video.mp4 [-o dossier]"""
 from __future__ import annotations
 

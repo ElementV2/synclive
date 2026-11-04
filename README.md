@@ -128,7 +128,27 @@ partage réseau ; plan de correction.
 | `synclive/server.py` | partage réseau |
 | `synclive/ui.py`, `synclive/ui_pattern.py` | interface (PySide6) |
 
+## Distribuer une version
+
+```bat
+release.bat
+```
+
+`release\` contient alors, à publier **ensemble** :
+
+- `SyncLive-<version>-windows-x64.zip` : l'exécutable, `LICENSE.txt`, `SOURCE.txt` et `licenses/`
+  (licence de chaque composant embarqué) ;
+- `SyncLive-<version>-source.zip` : le code source complet de cette version ;
+- `SHA256SUMS.txt` : les empreintes des deux archives.
+
+L'exécutable n'est pas signé : au premier lancement, Windows SmartScreen peut afficher un
+avertissement (« Informations complémentaires » puis « Exécuter quand même »).
+
 ## Licence
 
-Aucune licence n'est encore attribuée à ce projet. Les composants tiers sont listés dans
+SyncLive est un logiciel libre distribué sous **GNU General Public License v3.0 ou ultérieure**
+([LICENSE](LICENSE)). Copyright (C) 2026 ElementV2.
+
+Ce choix découle des composants embarqués : FFmpeg, tel que fourni par PyAV, est compilé avec x264
+et x265 (GPL). Les composants tiers et leurs licences sont listés dans
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

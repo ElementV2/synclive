@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Pipeline complet et agrégation par source (caméra ou boucle de mire).
 
 Convention : décalage = t_son − t_image.

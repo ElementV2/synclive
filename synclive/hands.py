@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Localisation des mains (MediaPipe) pour cibler la zone du clap. Optionnel."""
 from __future__ import annotations
 

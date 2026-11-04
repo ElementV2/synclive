@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Décodage vidéo / audio via PyAV (FFmpeg embarqué).
 
 Tous les temps sont en secondes sur la timeline du conteneur (pts * time_base),

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Partage des mires sur le réseau local.
 
 La machine de régie lance le serveur ; chaque PC ouvre http://<ip-régie>:<port> dans son
@@ -296,6 +297,7 @@ button:hover,a.btn:hover{border-color:#3a3c42}
   Le navigateur a sa propre latence audio : si cette machine lit ses médias avec un autre lecteur en production
   (VLC, OBS, logiciel de régie), télécharge le MP4 et lis-le en boucle avec ce lecteur.</p>
 </div>
+  <p class="note" style="border:none;padding-top:0">SyncLive — logiciel libre sous licence GNU GPL v3.</p>
 <div id="stage"><video id="v" loop playsinline></video></div>
 <div id="wait">Préparation de la boucle</div>
 <script>
