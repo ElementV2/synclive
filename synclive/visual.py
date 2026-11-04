@@ -176,10 +176,15 @@ def clap_candidates(sig: ShotSignal, t_audio: float, window: float,
             continue
         thr = DROP * ek     # sur un vrai tournage il reste du mouvement résiduel après contact
         r = k + 1
+        bigger = False
         while r < n and e[r] > thr:
+            if e[r] > 1.15 * ek:     # le mouvement repart plus fort : un autre geste (le clap ?) commence
+                bigger = True
+                break
             r += 1
-        if r >= n:          # le mouvement ne s'arrête pas dans la fenêtre
-            break
+        if bigger or r >= n:  # pas un arrêt net de CE geste : on examine le pic suivant
+            k += 1
+            continue
         m = r - 1
         am, ar = lo + m, lo + r
         if m > k:

@@ -209,3 +209,17 @@ def test_other_brand_beeps_short_and_long(beep_ms):
     assert len(got) == 4, [round(c.t, 3) for c in got]
     for c, o in zip(got, onsets):
         assert abs(c.t - o) < 0.002 and c.freq is not None and abs(c.freq - 1000) < 30
+
+
+def test_clap_right_after_a_slower_gesture_is_not_swallowed():
+    """Courbe de mouvement réelle (vignette CAM 1) : un geste plus lent juste avant le clap ne doit pas
+    « avaler » le clap (régression 1.1.0 : seul un faux candidat à -525 ms était trouvé)."""
+    from types import SimpleNamespace
+    import numpy as np
+    from synclive import visual
+    e = np.array([0.9, 0.9, 1.1, 1.3, 1.1, 1.0, 1.1, 1.1, 1.3, 1.5, 2.3, 2.5, 3.0, 2.8, 2.8, 2.4, 3.2, 3.4, 3.6,
+                  3.5, 2.7, 2.1, 2.7, 4.3, 6.1, 7.3, 7.4, 6.0, 2.8, 1.7, 4.4, 5.5, 4.9, 4.5, 3.2, 2.3, 1.1, 0.3, 0.2])
+    t = 1.4 - 0.63 + np.arange(e.size) * (1001 / 30000)
+    sig = SimpleNamespace(t=t, energy=lambda *a, **k: (e, 0, e.size - 1))
+    offs = [round((1.4 - v.t) * 1000) for v in visual.clap_candidates(sig, 1.4, 0.6)]
+    assert any(-300 <= o <= -240 for o in offs), offs

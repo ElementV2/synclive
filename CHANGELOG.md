@@ -4,6 +4,15 @@ Toutes les évolutions notables de SyncLive sont listées ici.
 Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), numérotation [SemVer](https://semver.org/lang/fr/) :
 `MAJEUR.MINEUR.CORRECTIF` (correctif = corrections, mineur = nouveautés compatibles, majeur = changements incompatibles).
 
+## [1.1.1] - 2026-11-04
+
+### Corrigé
+- Clap précédé d'un geste plus lent (personne qui se met en place) : le clap pouvait être « avalé »
+  par ce geste et un faux décalage était donné (constaté sur un multiview réel : erreur de 262 ms,
+  désormais 1 ms).
+- Un mouvement qui ne s'arrête pas dans la fenêtre de recherche interrompait toute la recherche
+  au lieu de passer au mouvement suivant.
+
 ## [1.1.0] - 2026-11-04
 
 ### Ajouté
@@ -30,7 +39,7 @@ Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), num
 
 ## [1.0.0] - 2026-11-04
 
-Première version publique.
+Première version (remplacée par la 1.1.0, qui apporte la mise à jour automatique).
 
 ### Ajouté
 - Analyse d'une vidéo de synchro par glisser-déposer : découpe en plans, regroupement par source, claps (arrêt net des mains, aide MediaPipe) et flashs de mire, toutes fréquences d'images (timestamps réels).
@@ -41,5 +50,6 @@ Première version publique.
 - Export : images annotées, récapitulatif, CSV, JSON.
 - Exécutable Windows autonome (licence GPL-3.0, composants tiers documentés).
 
+[1.1.1]: https://github.com/ElementV2/synclive/releases/tag/v1.1.1
 [1.1.0]: https://github.com/ElementV2/synclive/releases/tag/v1.1.0
-[1.0.0]: https://github.com/ElementV2/synclive/releases/tag/v1.0.0
+[1.0.0]: https://github.com/ElementV2/synclive/tree/b64643b
