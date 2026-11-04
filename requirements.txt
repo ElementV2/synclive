@@ -1,0 +1,8 @@
+# Versions testées (Windows 11, Python 3.11)
+numpy==2.4.6
+scipy==1.17.1
+opencv-python==5.0.0.93
+av==18.1.0
+PySide6==6.12.0
+pillow==13.0.0
+mediapipe==1.2.2
