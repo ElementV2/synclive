@@ -1,4 +1,5 @@
 @echo off
+cd /d "%~dp0"
 REM Construit dist\SyncLive\SyncLive.exe (dossier, pas un exe unique : les DLL Qt (LGPL) restent remplacables)
 call .venv\Scripts\activate.bat
 python tools\version_info.py || exit /b 1
