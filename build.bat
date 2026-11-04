@@ -11,4 +11,4 @@ pyinstaller --noconfirm --clean --windowed --name SyncLive --icon synclive\asset
   --collect-submodules av ^
   --exclude-module tkinter --exclude-module pytest ^
   main.py || exit /b 1
-python tools\collect_licenses.py || exit /b 1
+python tools\postbuild.py || exit /b 1

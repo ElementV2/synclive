@@ -13,6 +13,8 @@ et restent soumis à leur propre licence.
 | [NumPy](https://numpy.org), [SciPy](https://scipy.org) | calcul | BSD-3-Clause |
 | [Pillow](https://python-pillow.org) | images | MIT-CMU |
 | Police *Unbounded* (logo, vectorisée dans les SVG) | identité visuelle | SIL OFL 1.1 |
+| Python 3.11 (embarqué dans l'exécutable) | interpréteur | PSF License |
+| Runtime Microsoft Visual C++ (msvcp140, vcruntime140…) | exécution | redistribuable Microsoft Visual C++ |
 
 Les binaires FFmpeg fournis avec PyAV sont compilés avec x264 et x265 (GPL) et opencore-amr
 (Apache-2.0) : l'exécutable est donc distribué sous **GNU GPL version 3**, comme SyncLive
