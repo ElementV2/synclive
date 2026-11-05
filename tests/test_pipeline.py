@@ -266,3 +266,31 @@ def test_image_very_late_still_measured(tmp_path, fps):
     for cam, exp in zip(cams, [offs["A"], offs["B"]]):
         assert cam.offset is not None, cam.name
         assert abs(cam.offset - exp) < max(0.5 / float(Fraction(fps)), 0.015), (cam.name, cam.offset)
+
+
+def test_manual_clap_frame_overrides_auto(tmp_path):
+    """Bande d'images : l'image choisie à la main remplace la mesure automatique de ce clap, sans
+    être écartée par les garde-fous, et « revenir à l'automatique » rend la mesure d'origine."""
+    from synclive import media
+    vid = tmp_path / "v.mkv"
+    make(str(vid), Fraction(30000, 1001), OFFS, ORDER)
+    an = analysis.run(str(vid), analysis.Settings(use_hands=False))
+    cam = an.cameras()[0]
+    auto = cam.offset
+    c = next(c for c in cam.claps if c.selected is not None)
+    s = an.shots[c.shot]
+    times, frames = media.decode_range(str(vid), c.selected.t - 0.3, c.selected.t + 0.3, s.region)
+    assert len(times) == len(frames) >= 15 and abs(times[1] - times[0] - 1001 / 30000) < 1e-3
+    # image 3 images plus tôt que l'automatique sur TOUS les claps de la source
+    per = 1001 / 30000
+    for cl in cam.claps:
+        if cl.selected is not None:
+            cl.manual_t = cl.selected.t - 3 * per
+    cam2 = next(x for x in an.cameras() if x.id == cam.id)
+    assert cam2.manual and abs(cam2.offset - (auto + 3 * per)) < 0.002
+    assert cam2.uncertainty <= 0.5 * per + 1e-9          # ± ½ image : vérifié à l'œil
+    assert "à la main" in export.status(cam2, 30000 / 1001)[1]
+    for cl in cam.claps:
+        cl.manual_t = None
+    cam3 = next(x for x in an.cameras() if x.id == cam.id)
+    assert not cam3.manual and abs(cam3.offset - auto) < 1e-9

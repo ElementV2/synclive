@@ -140,10 +140,13 @@ def precision(cam: CameraResult) -> str:
     if unc is None:
         return ""
     txt = f" · ± {unc * 1000:.0f} ms"
+    why = []
     sfps = getattr(cam, "source_fps", None)
     if sfps:
-        txt += f" (caméra à {sfps:.0f} i/s réels)"
-    return txt
+        why.append(f"caméra à {sfps:.0f} i/s réels")
+    if getattr(cam, "manual", False):
+        why.append("image du clap réglée à la main")
+    return txt + (f" ({', '.join(why)})" if why else "")
 
 
 def fmt_audio_delay(plan: CorrectionPlan) -> str:
@@ -357,6 +360,7 @@ def export_all(an: Analysis, out_dir: str | Path) -> list[Path]:
                 "incertitude_ms": None if c.uncertainty is None else round(c.uncertainty * 1000, 1),
                 "cadence_reelle_ips": None if c.source_fps is None else round(c.source_fps, 2),
                 "ambigu": c.ambiguous,
+                "reglage_manuel": c.manual,
                 "claps_retenus": c.n_used,
                 "claps_total": c.n_total,
                 "confiance": c.confidence,

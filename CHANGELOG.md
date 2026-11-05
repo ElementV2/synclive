@@ -4,6 +4,20 @@ Toutes les évolutions notables de SyncLive sont listées ici.
 Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), numérotation [SemVer](https://semver.org/lang/fr/) :
 `MAJEUR.MINEUR.CORRECTIF` (correctif = corrections, mineur = nouveautés compatibles, majeur = changements incompatibles).
 
+## [1.3.0] - 2026-11-05
+
+### Ajouté
+- **Régler l'image du clap à la main** : bouton sur chaque source, bande d'images autour du clap
+  (zoom automatique sur les mains), on clique l'image où les mains se touchent, flèches ← → pour
+  avancer ou reculer d'une image. Le décalage est recalculé tout de suite, à ± ½ image près ;
+  « Revenir à l'automatique » et « Annuler la dernière modification » restent possibles. Les images
+  répétées d'une caméra lente sont grisées.
+
+### Modifié
+- **Interface adaptée à la taille de la fenêtre** : les sources s'affichent sur 1 à 4 colonnes
+  selon la largeur et leurs images s'agrandissent avec la fenêtre ; le plan de correction occupe
+  toute la largeur et les textes longs passent à la ligne. La fenêtre peut être réduite à ~900 px.
+
 ## [1.2.0] - 2026-11-05
 
 ### Ajouté
@@ -76,6 +90,7 @@ Première version (remplacée par la 1.1.0, qui apporte la mise à jour automati
 - Export : images annotées, récapitulatif, CSV, JSON.
 - Exécutable Windows autonome (licence GPL-3.0, composants tiers documentés).
 
+[1.3.0]: https://github.com/ElementV2/synclive/releases/tag/v1.3.0
 [1.2.0]: https://github.com/ElementV2/synclive/releases/tag/v1.2.0
 [1.1.1]: https://github.com/ElementV2/synclive/releases/tag/v1.1.1
 [1.1.0]: https://github.com/ElementV2/synclive/releases/tag/v1.1.0

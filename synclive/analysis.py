@@ -44,6 +44,7 @@ class Clap:
     selected: visual.VisualCandidate | None = None
     forced: int | None = None        # index de candidat choisi à la main
     tone: int | None = None          # n° de bip d'une mire SyncLive (note), None sinon
+    manual_t: float | None = None    # instant de l'image choisie à la main (bande d'images)
 
     @property
     def offset(self) -> float | None:
@@ -69,6 +70,7 @@ class CameraResult:
     uncertainty: float | None = None  # s, marge probable (≈ 95 %) sur le décalage
     source_fps: float | None = None   # cadence réelle si la caméra est plus lente que le fichier
     ambiguous: str | None = None      # décalage ambigu (claps trop rapprochés) : explication
+    manual: bool = False              # au moins un clap réglé à la main (image choisie)
 
 
 @dataclass
@@ -167,9 +169,17 @@ def _assign(claps: list[Clap], center: float, tol: float) -> list[Clap]:
 def _select(claps: list[Clap], period: float) -> None:
     for c in claps:
         c.selected = None
-    forced = [c for c in claps if not c.excluded and c.forced is not None and c.forced < len(c.candidates)]
-    for c in forced:
-        c.selected = c.candidates[c.forced]
+    forced = []
+    for c in claps:
+        if c.excluded:
+            continue
+        if c.manual_t is not None:      # image choisie à la main : prime sur tout le reste
+            c.selected = visual.VisualCandidate(
+                t=float(c.manual_t), strength=1.0, kind="flash" if c.method.startswith("mire") else "clap")
+            forced.append(c)
+        elif c.forced is not None and c.forced < len(c.candidates):
+            c.selected = c.candidates[c.forced]
+            forced.append(c)
     active = [c for c in claps if not c.excluded and c.candidates and c not in forced]
     if not active:
         return
@@ -214,7 +224,7 @@ def aggregate_camera(an: Analysis, cid: int) -> CameraResult:
     if len(sel) >= 2:
         top = max(c.selected.strength for c in sel)
         for c in sel:
-            if c.forced is None and c.selected.strength < 0.25 * top:
+            if c.forced is None and c.manual_t is None and c.selected.strength < 0.25 * top:
                 c.selected = None
     used = [c for c in claps if c.selected is not None]
     offs = np.array([c.offset for c in used], dtype=np.float64)
@@ -235,8 +245,10 @@ def aggregate_camera(an: Analysis, cid: int) -> CameraResult:
     periods = [an.source_period[i] for i in shot_ids if i in an.source_period]
     t_src = max(p, float(np.median(periods))) if periods else p
     unc = sigma = None
+    # image choisie à la main sur chaque clap retenu : le contact est connu à ± ½ image réelle
+    all_manual = bool(used) and all(c.manual_t is not None for c in used)
     if n:
-        floor = 0.5 * t_src / np.sqrt(n) if kind == "camera" else 0.001
+        floor = (0.25 if all_manual else 0.5) * t_src / np.sqrt(n) if kind == "camera" else 0.001
         sigma = max(spread or 0.0, floor)
         unc = 2.0 * sigma
     if n == 0:
@@ -247,6 +259,8 @@ def aggregate_camera(an: Analysis, cid: int) -> CameraResult:
         conf = "moyenne"
     else:
         conf = "faible"
+    if all_manual and conf in ("faible", "moyenne") and sigma <= 0.7 * p:
+        conf = "moyenne" if n < 2 else "élevée"   # vérifié à l'œil, image par image
     img = None
     if shot_ids:
         best_shot = max(shot_ids, key=lambda i: (sum(1 for c in used if c.shot == i),
@@ -257,7 +271,7 @@ def aggregate_camera(an: Analysis, cid: int) -> CameraResult:
     tiles = {an.shots[i].tile for i in shot_ids}
     tile = tiles.pop() if len(tiles) == 1 else None
     # un choix manuel (candidat forcé dans l'interface) n'est jamais annulé par les garde-fous
-    manual = any(c.forced is not None and c.selected is not None for c in claps)
+    manual = any((c.forced is not None or c.manual_t is not None) and c.selected is not None for c in claps)
     ambiguous = _ambiguity(claps, off, p) if kind == "camera" and not manual else None
     if kind == "mire" and n < 2 and not manual:
         # un seul bip sur un flash ne prouve rien : un flash revient chaque seconde
@@ -269,6 +283,7 @@ def aggregate_camera(an: Analysis, cid: int) -> CameraResult:
         offset=off, spread=spread, n_used=n, n_total=len([c for c in claps if not c.excluded]),
         confidence=conf, kind=kind, image=img, uncertainty=unc,
         source_fps=1.0 / t_src if t_src > 1.25 * p else None, ambiguous=ambiguous,
+        manual=any(c.manual_t is not None and c.selected is not None for c in claps),
     )
 
 

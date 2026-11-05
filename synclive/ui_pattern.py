@@ -124,6 +124,8 @@ class PatternPage(QWidget):
         self.periods.setToolTip("Les bips sont numérotés sur un cycle de 8 (note + QR) : la boucle dure "
                                 "un multiple de 8 périodes pour rester sans couture.")
         self.container = QComboBox()
+        self.container.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.container.setMinimumContentsLength(18)
         self.container.addItem("MP4 (H.264 + AAC) — universel", "mp4")
         self.container.addItem("MOV (H.264 + PCM 24 bits) — régie / montage", "mov")
         self.out_label = QLabel(str(self.out_dir))

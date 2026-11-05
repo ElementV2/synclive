@@ -9,12 +9,12 @@ from pathlib import Path
 
 os.environ.setdefault("GLOG_minloglevel", "2")
 
-from PySide6.QtCore import Qt, QThread, QTimer, QUrl, Signal
+from PySide6.QtCore import QSize, Qt, QThread, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QIcon, QImage, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFrame, QGridLayout,
     QGroupBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox,
-    QProgressBar, QPushButton, QScrollArea, QSpinBox, QSplitter, QTableWidget,
+    QProgressBar, QPushButton, QScrollArea, QSizePolicy, QSpinBox, QSplitter, QTableWidget,
     QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget,
 )
 
@@ -125,6 +125,8 @@ class DropZone(QFrame):
         self.label.setStyleSheet("font-size: 17px; font-weight: 600; background: transparent;")
         self.hint = QLabel("Claps devant chaque caméra et/ou mires SyncLive · MP4, MOV, MKV, MXF…")
         self.hint.setAlignment(Qt.AlignCenter)
+        self.hint.setWordWrap(True)
+        self.label.setWordWrap(True)
         self.hint.setStyleSheet("color: #8A8780; background: transparent;")
         btn = QPushButton("Parcourir…")
         btn.setObjectName("flat")
@@ -164,9 +166,38 @@ class DropZone(QFrame):
                 return
 
 
+class ScaledImage(QLabel):
+    """Image qui suit la largeur disponible en gardant ses proportions (cartes responsives)."""
+
+    def __init__(self, pix: QPixmap):
+        super().__init__()
+        self._src = pix
+        self.setMinimumWidth(240)
+        sp = QSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        sp.setHeightForWidth(True)
+        self.setSizePolicy(sp)
+        self.setAlignment(Qt.AlignCenter)
+
+    def hasHeightForWidth(self) -> bool:
+        return True
+
+    def heightForWidth(self, w: int) -> int:
+        return max(1, round(w * self._src.height() / max(1, self._src.width())))
+
+    def sizeHint(self) -> QSize:
+        return QSize(540, self.heightForWidth(540))
+
+    def resizeEvent(self, e):
+        w = self.width()
+        if w > 0 and (self.pixmap() is None or self.pixmap().width() != w):
+            self.setPixmap(self._src.scaledToWidth(w, Qt.SmoothTransformation))
+        super().resizeEvent(e)
+
+
 class CameraCard(QFrame):
     renamed = Signal(int, str)
     merge = Signal(int, int)
+    adjust = Signal(int)
 
     def __init__(self, cam: analysis.CameraResult, an: analysis.Analysis, others: list[tuple[int, str]],
                  plan: export.CorrectionPlan | None = None):
@@ -174,11 +205,7 @@ class CameraCard(QFrame):
         self.setObjectName("card")
         self.cam = cam
         lay = QVBoxLayout(self)
-        img = QLabel()
-        pix = pil_to_pixmap(export.annotate(cam, an, plan)).scaledToWidth(540, Qt.SmoothTransformation)
-        img.setPixmap(pix)
-        img.setFixedSize(pix.size())
-        lay.addWidget(img)
+        lay.addWidget(ScaledImage(pil_to_pixmap(export.annotate(cam, an, plan))))
         row = QHBoxLayout()
         row.addWidget(QLabel("Nom :"))
         self.name = QLineEdit(cam.name)
@@ -196,7 +223,17 @@ class CameraCard(QFrame):
             btn.setMenu(menu)
             row.addWidget(btn)
         lay.addLayout(row)
-        self.setFixedSize(self.sizeHint())
+        adj = QPushButton("Régler l'image du clap…" if not cam.manual else "Image du clap réglée à la main ✓ — modifier…")
+        adj.setToolTip("Bande d'images autour du clap : clique l'image où les mains se touchent "
+                       "si l'automatique s'est trompé")
+        adj.clicked.connect(lambda: self.adjust.emit(self.cam.id))
+        lay.addWidget(adj)
+        if not cam.claps:   # place gardée : toutes les cartes d'une ligne restent alignées
+            sp = adj.sizePolicy()
+            sp.setRetainSizeWhenHidden(True)
+            adj.setSizePolicy(sp)
+            adj.setVisible(False)
+        lay.addStretch(1)
 
 
 class NoWheelComboBox(QComboBox):
@@ -255,6 +292,7 @@ class MainWindow(QMainWindow):
 
         pr = QHBoxLayout()
         self.status = QLabel("Prêt. Conseil : 3 à 5 claps secs par caméra, mains bien visibles.")
+        self.status.setWordWrap(True)
         self.bar = QProgressBar()
         self.bar.setRange(0, 1000)
         self.bar.setTextVisible(False)
@@ -297,6 +335,7 @@ class MainWindow(QMainWindow):
         bot = QHBoxLayout()
         self.summary = QLabel("")
         self.summary.setStyleSheet("color:#8A8780;")
+        self.summary.setWordWrap(True)
         self.export_btn = QPushButton("Exporter les images et le rapport")
         self.export_btn.setObjectName("primary")
         self.export_btn.setEnabled(False)
@@ -322,6 +361,7 @@ class MainWindow(QMainWindow):
         box = QWidget()
         l = QVBoxLayout(box)
         lab = QLabel(title)
+        lab.setWordWrap(True)
         lab.setStyleSheet("color:#8A8780;")
         l.addWidget(lab)
         l.addWidget(w)
@@ -385,19 +425,22 @@ class MainWindow(QMainWindow):
         self.cards_host = QWidget()
         self.cards = QVBoxLayout(self.cards_host)
         self.cards.addWidget(self._plan_box(plan))
-        row = None
-        for k, cam in enumerate(cams):
-            if k % 2 == 0:
-                row = QHBoxLayout()
-                row.setAlignment(Qt.AlignLeft)
-                self.cards.addLayout(row)
+        self.card_grid = QGridLayout()
+        self.card_grid.setSpacing(10)
+        self.cards.addLayout(self.card_grid)
+        self.card_widgets = []
+        for cam in cams:
             others = [(c.id, c.name) for c in cams if c.id != cam.id]
             card = CameraCard(cam, an, others, plan)
             card.renamed.connect(self._rename)
             card.merge.connect(self._merge)
-            row.addWidget(card)
+            card.adjust.connect(self._adjust)
+            self.card_widgets.append(card)
+        self._grid_cols = 0
+        self._layout_cards()
         self.cards.addStretch(1)
         self.cards_scroll.setWidget(self.cards_host)
+        QTimer.singleShot(0, self._layout_cards)   # largeur réelle une fois la page affichée
 
         names = {c.id: export.display_name(c) for c in cams}
         self.shots_table.setRowCount(0)
@@ -439,10 +482,38 @@ class MainWindow(QMainWindow):
             for j, v in enumerate(c.candidates):
                 mark = "   (retenu)" if c.selected is v else ""
                 cb.addItem(f"{v.t:.3f} s   {export.fmt_ms(c.t_audio - v.t)}   force {v.strength:.2f}{mark}", j)
-            cb.setCurrentIndex(0 if c.forced is None else c.forced + 1)
+            if c.manual_t is not None:
+                cb.addItem(f"{c.manual_t:.3f} s   {export.fmt_ms(c.t_audio - c.manual_t)}   à la main", "manual")
+                cb.setCurrentIndex(cb.count() - 1)
+            else:
+                cb.setCurrentIndex(0 if c.forced is None else c.forced + 1)
             cb.activated.connect(lambda i, cid=c.id, box=cb: self._force(cid, box.itemData(i)))
             self.claps_table.setCellWidget(r, 4, cb)
         self.claps_table.blockSignals(False)
+
+    CARD_MIN_W = 470      # px : en dessous, une colonne de moins
+
+    def _layout_cards(self) -> None:
+        """Autant de colonnes que la largeur le permet (1 à 4) ; les images suivent la largeur."""
+        cards = getattr(self, "card_widgets", [])
+        if not cards:
+            return
+        w = self.cards_scroll.viewport().width() - 24
+        cols = int(max(1, min(4, w // self.CARD_MIN_W, len(cards))))
+        if cols == self._grid_cols:
+            return
+        self._grid_cols = cols
+        g = self.card_grid
+        for c in cards:
+            g.removeWidget(c)
+        for k, c in enumerate(cards):
+            g.addWidget(c, k // cols, k % cols, Qt.AlignTop)
+        for i in range(4):
+            g.setColumnStretch(i, 1 if i < cols else 0)
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        QTimer.singleShot(0, self._layout_cards)
 
     def show_about(self) -> None:
         """Mentions légales (GPL-3.0, section 0 : « Appropriate Legal Notices »)."""
@@ -508,6 +579,7 @@ class MainWindow(QMainWindow):
             cells = [export.display_name(f.cam), f"{head}\n{why}", act, res]
             for c, v in enumerate(cells):
                 lab = QLabel(v)
+                lab.setWordWrap(c in (1, 3))
                 st = "background:transparent;"
                 if c == 1:
                     st += "color:#FF5A1F;" if head.startswith(("IMAGE", "SON")) else "color:#8A8780;"
@@ -523,7 +595,7 @@ class MainWindow(QMainWindow):
         note.setWordWrap(True)
         note.setStyleSheet("color:#8A8780; background:transparent; padding-top:8px;")
         g.addWidget(note, len(plan.fixes) + 3, 0, 1, 4)
-        box.setMaximumWidth(1100)
+        g.setColumnStretch(1, 1)
         return box
 
     def refresh_later(self) -> None:
@@ -533,7 +605,7 @@ class MainWindow(QMainWindow):
     def _snapshot(self) -> None:
         an = self.an
         self._undo.append(([s.camera for s in an.shots], dict(an.camera_names),
-                           [(c.excluded, c.forced) for c in an.claps]))
+                           [(c.excluded, c.forced, c.manual_t) for c in an.claps]))
         del self._undo[:-50]
         self.undo_btn.setEnabled(True)
 
@@ -544,8 +616,8 @@ class MainWindow(QMainWindow):
         for s, c in zip(self.an.shots, cams):
             s.camera = c
         self.an.camera_names = names
-        for c, (ex, fo) in zip(self.an.claps, claps):
-            c.excluded, c.forced = ex, fo
+        for c, (ex, fo, mt) in zip(self.an.claps, claps):
+            c.excluded, c.forced, c.manual_t = ex, fo, mt
         self.undo_btn.setEnabled(bool(self._undo))
         self.refresh_later()
 
@@ -569,10 +641,35 @@ class MainWindow(QMainWindow):
         self.refresh_later()
 
     def _force(self, clap_id: int, cand) -> None:
-        if self.an is not None:
+        if self.an is not None and cand != "manual":
             self._snapshot()
             self.an.claps[clap_id].forced = cand
+            self.an.claps[clap_id].manual_t = None
             self.refresh_later()
+
+    def _adjust(self, cid: int) -> None:
+        """Bande d'images : l'utilisateur choisit l'image du contact pour chaque clap."""
+        if self.an is None:
+            return
+        from .ui_clap import ClapFrameDialog
+        cam = next((c for c in self.an.cameras() if c.id == cid), None)
+        if cam is None or not cam.claps:
+            return
+        dlg = ClapFrameDialog(self.an, cam, self)
+        dlg.resize(max(1000, int(self.width() * 0.9)), max(700, int(self.height() * 0.9)))
+        if dlg.exec() != ClapFrameDialog.Accepted:
+            return
+        ch = dlg.changes()
+        if not ch:
+            return
+        self._snapshot()
+        for clap_id, t in ch.items():
+            c = self.an.claps[clap_id]
+            c.manual_t = t
+            if t is not None:
+                c.excluded = False
+                c.forced = None
+        self.refresh_later()
 
     def _clap_toggled(self, item: QTableWidgetItem) -> None:
         if self.an is None or item.column() != 0:

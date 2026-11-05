@@ -288,3 +288,34 @@ def grab_frames(path: str, targets: list[float], max_width: int = 1920,
                 img = _rotate(img, int(getattr(best, "rotation", 0) or 0))
             out[t] = img
     return out
+
+
+def decode_range(path: str, t0: float, t1: float, region=(0.0, 0.0, 1.0, 1.0),
+                 max_width: int = 1280) -> tuple[list[float], list[np.ndarray]]:
+    """Toutes les images de [t0, t1] (RGB uint8), recadrées sur `region` (vignette d'un multiview,
+    coordonnées de l'image non tournée) puis tournées pour l'affichage. Sert à la bande d'images
+    du réglage manuel d'un clap : les temps sont ceux du décodeur, comme pour l'analyse."""
+    times: list[float] = []
+    frames: list[np.ndarray] = []
+    x0, y0, x1, y1 = region
+    with av.open(path) as c:
+        vs = c.streams.video[0]
+        vs.thread_type = "AUTO"
+        c.seek(max(0, int(max(0.0, t0 - 1.0) / vs.time_base)), stream=vs, backward=True, any_frame=False)
+        for frame in c.decode(vs):
+            t = frame.time
+            if t is None or t < t0 - 1e-6:
+                continue
+            if t > t1:
+                break
+            w, h = frame.width, frame.height
+            # largeur demandée pour la vignette seule : on décode plus grand si elle est petite
+            full_w = min(w, int(max_width / max(x1 - x0, 0.05)))
+            if full_w < w:
+                h, w = int(round(h * full_w / w / 2) * 2), full_w
+            rgb = frame.to_ndarray(format="rgb24", width=w, height=h)
+            crop = rgb[int(y0 * h):max(int(y0 * h) + 2, int(round(y1 * h))),
+                       int(x0 * w):max(int(x0 * w) + 2, int(round(x1 * w)))]
+            frames.append(np.ascontiguousarray(_rotate(crop, int(getattr(frame, "rotation", 0) or 0))))
+            times.append(float(t))
+    return times, frames
