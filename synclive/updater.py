@@ -39,10 +39,13 @@ class Release:
 
     @property
     def windows_zip(self) -> tuple[str, str, int] | None:
-        for name, (u, size) in self.assets.items():
-            if name.endswith("-windows-x64.zip"):
-                return name, u, size
-        return None
+        # le zip numéroté d'abord ; la copie au nom fixe (lien permanent) est identique
+        names = sorted((n for n in self.assets if n.endswith("-windows-x64.zip")),
+                       key=lambda n: not re.search(r"\d+\.\d+", n))
+        if not names:
+            return None
+        u, size = self.assets[names[0]]
+        return names[0], u, size
 
 
 def parse_version(v: str) -> tuple[int, ...]:

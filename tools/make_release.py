@@ -3,6 +3,8 @@
 
   SyncLive-<version>-windows-x64.zip   exécutable + licences + offre de source
   SyncLive-<version>-source.zip        code source complet de cette version (git archive)
+  SyncLive-windows-x64.zip / SyncLive-source.zip   copies au nom fixe, pour un lien permanent :
+      https://github.com/ElementV2/synclive/releases/latest/download/SyncLive-windows-x64.zip
   SHA256SUMS.txt
 
 La GPL impose de fournir le code source avec l'exécutable : publier les deux zips ensemble.
@@ -55,11 +57,18 @@ def main() -> int:
     subprocess.run(["git", "archive", "--format=zip", f"--prefix={base}/", "-o", str(src_zip), "HEAD"],
                    cwd=ROOT, check=True)
 
+    # copies au nom fixe : /releases/latest/download/<nom> pointe toujours sur la dernière version
+    exe_fixed, src_fixed = OUT / "SyncLive-windows-x64.zip", OUT / "SyncLive-source.zip"
+    shutil.copyfile(exe_zip, exe_fixed)
+    shutil.copyfile(src_zip, src_fixed)
+
     sums = OUT / "SHA256SUMS.txt"
-    sums.write_text("".join(f"{sha256(p)}  {p.name}\n" for p in (exe_zip, src_zip)), encoding="utf-8")
-    for p in (exe_zip, src_zip, sums):
+    files = (exe_zip, src_zip, exe_fixed, src_fixed)
+    sums.write_text("".join(f"{sha256(p)}  {p.name}\n" for p in files), encoding="utf-8")
+    for p in (*files, sums):
         print(f"{p.name:40s} {p.stat().st_size / 1e6:8.1f} Mo")
-    print(f"\nÀ publier ensemble (GPL) : {exe_zip.name} + {src_zip.name}")
+    print(f"\nÀ publier ensemble (GPL) : les 4 zips + {sums.name}")
+    print("Lien permanent : https://github.com/ElementV2/synclive/releases/latest/download/SyncLive-windows-x64.zip")
     return 0
 
 
