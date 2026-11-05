@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Publie la version courante sur GitHub : release vX.Y.Z, notes tirées de CHANGELOG.md,
-fichiers de release/ (exe zip, sources zip, SHA256SUMS.txt). Voir RELEASING.md.
+fichiers de release/ (SyncLive-windows-x64.zip, SHA256SUMS.txt). Voir RELEASING.md.
 
 Jeton : variable GITHUB_TOKEN, sinon gestionnaire d'identifiants de Git (jamais affiché).
 """
@@ -22,14 +22,13 @@ from synclive import __url__, __version__  # noqa: E402
 REPO = __url__.replace("https://github.com/", "").strip("/")
 TAG = f"v{__version__}"
 REL = ROOT / "release"
-ASSETS = [(f"SyncLive-{__version__}-windows-x64.zip", "application/zip"),
-          (f"SyncLive-{__version__}-source.zip", "application/zip"),
+ASSETS = [("SyncLive-windows-x64.zip", "application/zip"),
           ("SHA256SUMS.txt", "text/plain")]
 
 INSTALL = """
 ## Installation (Windows 10 / 11, 64 bits)
 
-1. Télécharger **`SyncLive-{v}-windows-x64.zip`** ci-dessous.
+1. Télécharger **`SyncLive-windows-x64.zip`** ci-dessous.
 2. Clic droit sur le zip > **Extraire tout** (ne pas lancer l'exe depuis l'intérieur du zip).
 3. Ouvrir le dossier `SyncLive` et lancer **`SyncLive.exe`**. Rien d'autre à installer.
 
@@ -40,9 +39,11 @@ cliquer sur **Informations complémentaires** puis **Exécuter quand même**.
 
 | Fichier | Contenu |
 |---|---|
-| `SyncLive-{v}-windows-x64.zip` | application prête à l'emploi |
-| `SyncLive-{v}-source.zip` | code source complet de cette version (GPL) |
-| `SHA256SUMS.txt` | empreintes SHA-256 |
+| `SyncLive-windows-x64.zip` | application prête à l'emploi |
+| `SHA256SUMS.txt` | empreinte SHA-256 |
+| Source code | code source complet de cette version (GPL) |
+
+Lien permanent vers la dernière version : {url}/releases/latest/download/SyncLive-windows-x64.zip
 
 Logiciel libre sous GNU GPL v3.0 ou ultérieure. Historique complet : [CHANGELOG.md]({url}/blob/main/CHANGELOG.md).
 """

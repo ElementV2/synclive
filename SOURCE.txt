@@ -4,8 +4,9 @@ SyncLive — code source correspondant
 SyncLive est un logiciel libre distribué sous GNU GPL version 3 ou ultérieure (voir LICENSE.txt).
 
 Code source de SyncLive
-  Chaque version de l'exécutable est publiée avec l'archive de son code source complet :
-  SyncLive-<version>-source.zip, au même endroit que l'exécutable.
+  Chaque version de l'exécutable est publiée avec l'archive de son code source complet
+  (« Source code », sur la même page de release que l'exécutable) :
+  https://github.com/ElementV2/synclive/releases
   Dépôt : https://github.com/ElementV2/synclive
 
 Composants tiers (FFmpeg, x264, x265, Qt…)

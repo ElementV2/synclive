@@ -19,5 +19,5 @@ et restent soumis à leur propre licence.
 Les binaires FFmpeg fournis avec PyAV sont compilés avec x264 et x265 (GPL) et opencore-amr
 (Apache-2.0) : l'exécutable est donc distribué sous **GNU GPL version 3**, comme SyncLive
 (voir `LICENSE`). `release.bat` livre avec l'exécutable le dossier `licenses/` (textes de licence
-de chaque composant), `SOURCE.txt` (offre de code source) et l'archive des sources de SyncLive.
+de chaque composant), `SOURCE.txt` (offre de code source) ; les sources de SyncLive sont l'archive « Source code » de chaque release.
 Le détail des bibliothèques FFmpeg embarquées est dans `licenses/FFmpeg-components.md`.

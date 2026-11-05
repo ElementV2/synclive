@@ -154,12 +154,15 @@ Procédure complète et conventions indispensables à la mise à jour automatiqu
 release.bat
 ```
 
-`release\` contient alors, à publier **ensemble** :
+`release\` contient alors :
 
-- `SyncLive-<version>-windows-x64.zip` : l'exécutable, `LICENSE.txt`, `SOURCE.txt` et `licenses/`
+- `SyncLive-windows-x64.zip` : l'exécutable, `LICENSE.txt`, `SOURCE.txt` et `licenses/`
   (licence de chaque composant embarqué) ;
-- `SyncLive-<version>-source.zip` : le code source complet de cette version ;
-- `SHA256SUMS.txt` : les empreintes des deux archives.
+- `SHA256SUMS.txt` : son empreinte.
+
+Le code source de chaque version est l'archive « Source code » jointe par GitHub à la release.
+Lien permanent vers la dernière version :
+<https://github.com/ElementV2/synclive/releases/latest/download/SyncLive-windows-x64.zip>
 
 L'exécutable n'est pas signé : au premier lancement, Windows SmartScreen peut afficher un
 avertissement (« Informations complémentaires » puis « Exécuter quand même »).

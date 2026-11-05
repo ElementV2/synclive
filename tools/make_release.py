@@ -1,18 +1,18 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Prépare une version distribuable dans release/ :
 
-  SyncLive-<version>-windows-x64.zip   exécutable + licences + offre de source
-  SyncLive-<version>-source.zip        code source complet de cette version (git archive)
-  SyncLive-windows-x64.zip / SyncLive-source.zip   copies au nom fixe, pour un lien permanent :
-      https://github.com/ElementV2/synclive/releases/latest/download/SyncLive-windows-x64.zip
+  SyncLive-windows-x64.zip   exécutable + licences + offre de source
   SHA256SUMS.txt
 
-La GPL impose de fournir le code source avec l'exécutable : publier les deux zips ensemble.
+Nom sans numéro de version : le lien
+  https://github.com/ElementV2/synclive/releases/latest/download/SyncLive-windows-x64.zip
+télécharge toujours la dernière version (le numéro est porté par le tag de la release).
+Le code source de la version est l'archive « Source code » que GitHub joint à chaque release
+(git archive du tag) : c'est l'offre de source exigée par la GPL.
 """
 from __future__ import annotations
 
 import hashlib
-import shutil
 import subprocess
 import sys
 import zipfile
@@ -40,35 +40,25 @@ def main() -> int:
         return 1
     dirty = subprocess.run(["git", "status", "--porcelain"], cwd=ROOT, capture_output=True, text=True).stdout
     if dirty.strip():
-        print("Attention : des modifications ne sont pas commitées ; l'archive source correspond au dernier "
-              "commit. Commite avant de publier.", file=sys.stderr)
+        print("Attention : des modifications ne sont pas commitées ; le code source publié (tag) ne "
+              "correspondra pas à l'exe. Commite avant de publier.", file=sys.stderr)
     OUT.mkdir(exist_ok=True)
-    base = f"SyncLive-{__version__}"
+    for old in OUT.glob("*"):          # fichiers des versions précédentes
+        if old.is_file():
+            old.unlink()
 
-    exe_zip = OUT / f"{base}-windows-x64.zip"
-    if exe_zip.exists():
-        exe_zip.unlink()
+    exe_zip = OUT / "SyncLive-windows-x64.zip"
     with zipfile.ZipFile(exe_zip, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as z:
         for f in sorted(DIST.rglob("*")):
             if f.is_file():
                 z.write(f, Path("SyncLive") / f.relative_to(DIST))
 
-    src_zip = OUT / f"{base}-source.zip"
-    subprocess.run(["git", "archive", "--format=zip", f"--prefix={base}/", "-o", str(src_zip), "HEAD"],
-                   cwd=ROOT, check=True)
-
-    # copies au nom fixe : /releases/latest/download/<nom> pointe toujours sur la dernière version
-    exe_fixed, src_fixed = OUT / "SyncLive-windows-x64.zip", OUT / "SyncLive-source.zip"
-    shutil.copyfile(exe_zip, exe_fixed)
-    shutil.copyfile(src_zip, src_fixed)
-
     sums = OUT / "SHA256SUMS.txt"
-    files = (exe_zip, src_zip, exe_fixed, src_fixed)
-    sums.write_text("".join(f"{sha256(p)}  {p.name}\n" for p in files), encoding="utf-8")
-    for p in (*files, sums):
+    sums.write_text(f"{sha256(exe_zip)}  {exe_zip.name}\n", encoding="utf-8")
+    for p in (exe_zip, sums):
         print(f"{p.name:40s} {p.stat().st_size / 1e6:8.1f} Mo")
-    print(f"\nÀ publier ensemble (GPL) : les 4 zips + {sums.name}")
-    print("Lien permanent : https://github.com/ElementV2/synclive/releases/latest/download/SyncLive-windows-x64.zip")
+    print(f"\nSyncLive {__version__} prêt. Lien permanent : "
+          "https://github.com/ElementV2/synclive/releases/latest/download/SyncLive-windows-x64.zip")
     return 0
 
 

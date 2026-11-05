@@ -536,7 +536,7 @@ class MainWindow(QMainWindow):
             "Voir la licence pour plus de détails : "
             "<a href='https://www.gnu.org/licenses/gpl-3.0.html' style='color:#FF5A1F'>gnu.org/licenses/gpl-3.0</a>.</p>"
             f"<p>Code source : <a href='{synclive.__url__}' style='color:#FF5A1F'>{synclive.__url__}</a> "
-            "(et archive <i>SyncLive-version-source.zip</i> fournie avec chaque version).<br>"
+            "(archive <i>Source code</i> jointe à chaque version).<br>"
             f"Composants tiers (FFmpeg, x264, Qt, MediaPipe, OpenCV…) : {lic_link}.</p>")
         box.setTextInteractionFlags(Qt.TextBrowserInteraction)
         box.setStandardButtons(QMessageBox.Ok)
