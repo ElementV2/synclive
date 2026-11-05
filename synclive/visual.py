@@ -19,7 +19,7 @@ import numpy as np
 from scipy.ndimage import binary_dilation
 
 from .media import GRID_COLS, GRID_ROWS, MotionScan
-from .shots import Shot
+from .shots import DUP_DIFF, Shot
 
 MIN_PEAK = 2.0        # énergie minimale (niveaux de gris moyens / 255) d'un vrai événement
 MAX_CELLS = 32          # grille 32x18 : 4 fois plus de cellules qu en 16x9
@@ -74,6 +74,23 @@ class ShotSignal:
         th, tw = scan.thumbs.shape[1:3]
         self.ty = slice(int(round(y0 * th)), max(int(round(y0 * th)) + 1, int(round(y1 * th))))
         self.tx = slice(int(round(x0 * tw)), max(int(round(x0 * tw)) + 1, int(round(x1 * tw))))
+        self.real = self._real_frames()
+
+    def _real_frames(self) -> np.ndarray | None:
+        """Images réellement nouvelles quand la source est plus lente que le fichier (caméra à
+        20 i/s dans un fichier à 60) ; None sinon. Sur une telle source, le mouvement retombe à 0
+        à chaque image répétée : chaque image réelle ressemblerait à un « arrêt net » de clap."""
+        th = self.scan.thumbs[self.shot.i0:self.shot.i1, self.ty, self.tx]
+        if th.shape[0] < 8:
+            return None
+        d = np.abs(np.diff(th.astype(np.int16), axis=0)).mean(axis=(1, 2, 3)) / 255.0
+        real = np.concatenate([[True], d >= DUP_DIFF])
+        idx = np.flatnonzero(real[1:])
+        gaps = np.diff(idx)
+        gaps = gaps[gaps <= 8]
+        if gaps.size < 3 or float(np.mean(gaps)) < 1.25:
+            return None
+        return real
 
     def window(self, t_audio: float, half: float) -> tuple[int, int]:
         lo = max(1, int(np.searchsorted(self.t, t_audio - half)) - 1)
@@ -165,10 +182,23 @@ def clap_candidates(sig: ShotSignal, t_audio: float, window: float,
     # on regarde LOOKAHEAD au-delà de la fenêtre : un clap vu tard (image très en retard) doit
     # pouvoir montrer son arrêt, même si la retombée du mouvement tombe après la fenêtre
     e, lo, hi = sig.energy(t_audio, window + LOOKAHEAD, mask)
+    idx = np.arange(lo, lo + e.size)
+    real = getattr(sig, "real", None)
+    slow = real is not None and e.size > 0
+    if slow:
+        keep = real[idx]          # images répétées : ni mouvement ni arrêt, on les saute
+        e, idx = e[keep], idx[keep]
     if e.size < 3:
         return []
-    t = sig.t
-    tt = t[lo:hi + 1]
+    t = sig.t[idx]
+    step = sig.t[1] - sig.t[0] if sig.t.size > 1 else 1 / 30
+    if slow:
+        # cadence irrégulière (33, 50, 67 ms…) : le mouvement mesuré sur un intervalle est
+        # proportionnel à sa durée ; on le ramène à une vitesse pour comparer les intervalles
+        prev = np.concatenate([[t[0] - np.median(np.diff(t))], t[:-1]])
+        dt = np.maximum(t - prev, step)
+        e = e * float(np.median(dt)) / dt
+    tt = t
     core = np.abs(tt - t_audio) <= window
     wmax = float(e[core].max()) if core.any() else float(e.max())
     if wmax < MIN_PEAK:
@@ -193,7 +223,7 @@ def clap_candidates(sig: ShotSignal, t_audio: float, window: float,
             k += 1
             continue
         m = r - 1
-        am, ar = lo + m, lo + r
+        am, ar = m, r                  # indices dans t (images réelles seulement)
         if m > k:
             ref = e[m - 1]
             f = float(np.clip(e[m] / ref, 0, 1)) if ref > 0 else 1.0
@@ -205,7 +235,9 @@ def clap_candidates(sig: ShotSignal, t_audio: float, window: float,
             fr = float(np.clip(e[r] / max(e[m], 1e-9), 0, 1))
             tc = t[am] + fr * (t[ar] - t[am])
         # un clap s'arrête net (< 80 ms) ; un geste normal ralentit progressivement
-        sharp = 1.0 if t[ar] - t[lo + k] <= 0.08 else 0.35
-        out.append(VisualCandidate(t=float(tc), strength=float(ek / wmax * sharp), kind="clap"))
+        # (sur une source lente, l'arrêt peut prendre 2 images réelles)
+        lim = 0.08 if not slow else max(0.08, 2.2 * float(np.median(np.diff(t))))
+        sharp = 1.0 if t[ar] - t[k] <= lim else 0.35
+        out.append(VisualCandidate(t=float(tc), strength=float(min(ek / wmax, 1.0) * sharp), kind="clap"))
         k = r + 1
     return [c for c in out if abs(c.t - t_audio) <= window]

@@ -95,7 +95,7 @@ class PatternPage(QWidget):
         self.fps_checks: dict[str, QCheckBox] = {}
         for i, name in enumerate(pattern.FRAME_RATES):
             cb = QCheckBox(name)
-            cb.setChecked(name in ("25", "29.97", "50", "59.94", "60"))
+            cb.setChecked(name == "59.94")     # par défaut : Full HD 59.94
             self.fps_checks[name] = cb
             gf.addWidget(cb, i // 4, i % 4)
         quick = QHBoxLayout()
@@ -114,15 +114,13 @@ class PatternPage(QWidget):
         self.n_sources.setRange(1, pattern.MAX_SOURCES)
         self.n_sources.setToolTip("Une boucle par source (PC, console…), chacune avec son numéro, son nom\n"
                                   "et son QR code : SyncLive lit le QR pour savoir quelle machine est à l'image.")
-        self.first_source = QSpinBox()
-        self.first_source.setRange(1, pattern.MAX_SOURCES)
         self.periods = QSpinBox()
         self.periods.setRange(8, 600)
         self.periods.setSingleStep(8)
         self.periods.setValue(16)
-        self.periods.setSuffix(" périodes (≈ s, multiple de 8)")
-        self.periods.setToolTip("Les bips sont numérotés sur un cycle de 8 (note + QR) : la boucle dure "
-                                "un multiple de 8 périodes pour rester sans couture.")
+        self.periods.setSuffix(" s")
+        self.periods.setToolTip("Un bip par seconde, numérotés sur un cycle de 8 (note + QR) : la durée "
+                                "avance de 8 s en 8 s pour que la boucle reste sans couture.")
         self.container = QComboBox()
         self.container.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
         self.container.setMinimumContentsLength(18)
@@ -133,7 +131,7 @@ class PatternPage(QWidget):
         choose = QPushButton("Dossier…")
         choose.setObjectName("flat")
         choose.clicked.connect(self._choose)
-        rows = [("Nombre de sources", self.n_sources), ("N° de la 1re source", self.first_source),
+        rows = [("Nombre de sources", self.n_sources),
                 ("Durée de la boucle", self.periods), ("Format", self.container),
                 ("Dossier de sortie", choose)]
         for i, (lab, w) in enumerate(rows):
@@ -336,7 +334,7 @@ class PatternPage(QWidget):
                 if not fc.isChecked():
                     continue
                 for k in range(self.n_sources.value()):
-                    src = (self.first_source.value() - 1 + k) % pattern.MAX_SOURCES + 1
+                    src = k + 1          # les sources sont toujours numérotées à partir de 1
                     out.append(pattern.PatternSpec(w, h, pattern.FRAME_RATES[fname], source=src,
                                                    periods=self.periods.value(),
                                                    container=self.container.currentData()))

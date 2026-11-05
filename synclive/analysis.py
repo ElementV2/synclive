@@ -67,6 +67,7 @@ class CameraResult:
     tile: str | None = None          # vignette du multiview (« vignette haut gauche »)
     same_look_as: list[str] = field(default_factory=list)
     image: np.ndarray | None = None
+    image_shot: int | None = None     # plan dont l'image est montrée
     uncertainty: float | None = None  # s, marge probable (≈ 95 %) sur le décalage
     source_fps: float | None = None   # cadence réelle si la caméra est plus lente que le fichier
     ambiguous: str | None = None      # décalage ambigu (claps trop rapprochés) : explication
@@ -84,6 +85,8 @@ class Analysis:
     shot_images: dict[int, np.ndarray] = field(default_factory=dict)
     hands_status: str = ""
     source_period: dict[int, float] = field(default_factory=dict)   # plan -> durée d'une image réelle
+    removed: set[int] = field(default_factory=set)   # sources supprimées à la main (rien à voir dessus)
+    image_clap: dict[int, int] = field(default_factory=dict)  # plan -> clap réglé en dernier (aperçu)
 
     @property
     def period(self) -> float:
@@ -92,7 +95,7 @@ class Analysis:
     def camera_ids(self) -> list[int]:
         seen: list[int] = []
         for s in self.shots:
-            if s.camera not in seen:
+            if s.camera not in seen and s.camera not in self.removed:
                 seen.append(s.camera)
         return seen
 
@@ -111,6 +114,10 @@ class Analysis:
             if s.camera == src:
                 s.camera = dst
         self.camera_names.pop(src, None)
+
+    def remove_camera(self, cid: int) -> None:
+        """Source sans intérêt (aucun clap visible) : retirée des résultats et de l'export."""
+        self.removed.add(cid)
 
     def move_shot(self, shot_index: int, camera: int | None) -> None:
         """camera=None : crée une nouvelle caméra pour ce plan."""
@@ -217,7 +224,14 @@ def _clusters(claps: list[Clap], period: float) -> list[tuple[float, list[Clap]]
 def aggregate_camera(an: Analysis, cid: int) -> CameraResult:
     shot_ids = [s.index for s in an.shots if s.camera == cid]
     claps = [c for c in an.claps if c.shot in shot_ids]
-    _select(claps, an.period)
+    p = an.period
+    # cadence réelle : une webcam qui manque de lumière répète ses images (15 i/s dans un fichier
+    # à 30) ; l'instant d'un clap n'est alors connu qu'à une image réelle près. Un flash de mire,
+    # lui, tombe pile sur une image : pas de plancher.
+    periods = [an.source_period[i] for i in shot_ids if i in an.source_period]
+    t_src = max(p, float(np.median(periods))) if periods else p
+    # appariement à la précision de la source (une image réelle), pas du fichier
+    _select(claps, t_src)
     # un candidat très faible à côté de vrais claps nets (faux clap audio : bruit en début de
     # fichier, choc) ne doit pas tirer la médiane ; on ne l'écarte pas s'il est seul
     sel = [c for c in claps if c.selected is not None]
@@ -234,16 +248,10 @@ def aggregate_camera(an: Analysis, cid: int) -> CameraResult:
         spread = max(spread, float(offs.std()) if offs.size > 2 else spread)
     else:
         off, spread = None, None
-    p = an.period
     n = len(used)
     name = an.camera_names.get(cid, f"CAM {cid + 1}")
     kind = "mire" if name.startswith("MIRE") or (
         claps and sum(c.method.startswith("mire") for c in claps) > len(claps) / 2) else "camera"
-    # cadence réelle : une webcam qui manque de lumière répète ses images (15 i/s dans un fichier
-    # à 30) ; l'instant d'un clap n'est alors connu qu'à une image réelle près. Un flash de mire,
-    # lui, tombe pile sur une image : pas de plancher.
-    periods = [an.source_period[i] for i in shot_ids if i in an.source_period]
-    t_src = max(p, float(np.median(periods))) if periods else p
     unc = sigma = None
     # image choisie à la main sur chaque clap retenu : le contact est connu à ± ½ image réelle
     all_manual = bool(used) and all(c.manual_t is not None for c in used)
@@ -253,35 +261,50 @@ def aggregate_camera(an: Analysis, cid: int) -> CameraResult:
         unc = 2.0 * sigma
     if n == 0:
         conf = "aucune"
-    elif n >= 3 and sigma <= 0.35 * p:
+    elif n >= 3 and sigma <= 0.35 * t_src:
         conf = "élevée"
-    elif n >= 2 and sigma <= 0.7 * p:
+    elif n >= 2 and sigma <= 0.7 * t_src:
         conf = "moyenne"
     else:
         conf = "faible"
-    if all_manual and conf in ("faible", "moyenne") and sigma <= 0.7 * p:
+    if all_manual and conf in ("faible", "moyenne") and sigma <= 0.7 * t_src:
         conf = "moyenne" if n < 2 else "élevée"   # vérifié à l'œil, image par image
     img = None
+    image_shot = None
     if shot_ids:
-        best_shot = max(shot_ids, key=lambda i: (sum(1 for c in used if c.shot == i),
+        # plan où l'image du clap a été choisie à la main d'abord : c'est elle qu'on montre
+        manual_ids = {c.id for c in used if c.manual_t is not None}
+        best_shot = max(shot_ids, key=lambda i: (an.image_clap.get(i) in manual_ids,
+                                                 any(c.shot == i and c.manual_t is not None for c in used),
+                                                 sum(1 for c in used if c.shot == i),
                                                  an.shots[i].duration))
         img = an.shot_images.get(best_shot)
+        image_shot = best_shot
     qrs = [an.shots[i].qr for i in shot_ids if an.shots[i].qr]
     label = max(set(qrs), key=qrs.count) if qrs else None
     tiles = {an.shots[i].tile for i in shot_ids}
     tile = tiles.pop() if len(tiles) == 1 else None
     # un choix manuel (candidat forcé dans l'interface) n'est jamais annulé par les garde-fous
     manual = any((c.forced is not None or c.manual_t is not None) and c.selected is not None for c in claps)
-    ambiguous = _ambiguity(claps, off, p) if kind == "camera" and not manual else None
+    ambiguous = _ambiguity(claps, off, t_src) if kind == "camera" and not manual else None
     if kind == "mire" and n < 2 and not manual:
         # un seul bip sur un flash ne prouve rien : un flash revient chaque seconde
         off, spread, unc, conf, n = None, None, None, "aucune", 0
+    if not ambiguous and kind == "camera" and not manual and n == 1 and used[0].method == "clap (mouvement)":
+        # un seul clap retenu, aucune main vue, et d'autres mouvements aussi nets dans sa fenêtre
+        # (décor animé, projection, geste quelconque) : rien ne dit lequel est le clap
+        c = used[0]
+        rivals = [v for v in c.candidates if v is not c.selected and abs(v.t - c.selected.t) > 2 * t_src
+                  and v.strength >= 0.7 * c.selected.strength]
+        if rivals:
+            ambiguous = ("un seul clap et plusieurs mouvements possibles à l'image : "
+                         "régler l'image du clap à la main, ou supprimer la source si aucun clap n'y est visible")
     if ambiguous:
         off, conf = None, "aucune"
     return CameraResult(
         id=cid, name=name, shots=shot_ids, claps=claps, source_label=label, tile=tile,
         offset=off, spread=spread, n_used=n, n_total=len([c for c in claps if not c.excluded]),
-        confidence=conf, kind=kind, image=img, uncertainty=unc,
+        confidence=conf, kind=kind, image=img, image_shot=image_shot, uncertainty=unc,
         source_fps=1.0 / t_src if t_src > 1.25 * p else None, ambiguous=ambiguous,
         manual=any(c.manual_t is not None and c.selected is not None for c in claps),
     )
@@ -333,8 +356,10 @@ def _ambiguity(claps: list[Clap], off: float | None, period: float) -> str | Non
         alt = off - gap if off > 0 else off + gap
     else:
         _, alt, gap = worst
-    return (f"ambigu : {off * 1000:+.0f} ms ou {alt * 1000:+.0f} ms, claps espacés de "
-            f"{gap:.2f} s".replace(".", ",") + " (espacer les claps d'au moins 1 s)")
+    # pas de chiffres : l'un des deux appariements est faux, les afficher laisse croire à une mesure
+    return (f"ambigu : claps espacés de {gap:.2f} s".replace(".", ",")
+            + ", trop rapprochés pour savoir quel son va avec quel geste : régler l'image du clap "
+              "à la main (et espacer les claps d'au moins 1 s la prochaine fois)")
 
 
 def _source_period(scan: media.MotionScan, shot: shots_mod.Shot, period: float) -> float:
@@ -372,7 +397,7 @@ def _split_shots_by_offset(shots: list[shots_mod.Shot], claps: list[Clap], scan:
     times = scan.times
     for s in shots:
         sc = sorted([c for c in claps if c.shot == s.index], key=lambda c: c.t_audio)
-        cl = _clusters(sc, period)
+        cl = _clusters(sc, max(period, _source_period(scan, s, period)))
         label = {}
         for li, (_, g) in enumerate(cl):
             for c in g:
@@ -941,20 +966,47 @@ def run(path: str, settings: Settings | None = None,
     prog("Extraction des images", 0.93)
     for cid in an.camera_ids():
         aggregate_camera(an, cid)   # remplit clap.selected
-    targets: dict[int, float] = {}
-    for s in shots:
-        sel = [c for c in claps if c.shot == s.index and c.selected is not None]
-        if sel:
-            best = max(sel, key=lambda c: c.selected.strength)
-            # clap : mains jointes juste après le contact ; flash : l'image du flash
-            dt = 0.0 if best.selected.kind == "flash" else 1.5 * an.period
-            t = best.selected.t + dt
-        else:
-            t = (s.start + s.end) / 2
-        targets[s.index] = min(max(t, s.start), s.end - an.period)
-    frames = media.grab_frames(path, list(targets.values()))
-    for si, t in targets.items():
-        if t in frames:
-            an.shot_images[si] = _crop(frames[t], shots[si].region)
+    refresh_images(an)
     prog("Terminé", 1.0)
     return an
+
+
+def shown_clap(an: Analysis, shot_index: int) -> Clap | None:
+    """Clap dont l'image est montrée pour ce plan (carte, export, ouverture du réglage) : le clap
+    réglé à la main en dernier, sinon le premier réglé, sinon le clap automatique le plus net."""
+    claps = [c for c in an.claps if c.shot == shot_index and c.selected is not None]
+    manual = [c for c in claps if c.manual_t is not None]
+    pref = next((c for c in manual if c.id == an.image_clap.get(shot_index)), None)
+    if pref is not None or manual:
+        return pref or manual[0]
+    return max(claps, key=lambda c: c.selected.strength) if claps else None
+
+
+def clap_image_t(an: Analysis, c: Clap) -> float:
+    """Instant de l'image montrée pour un clap : l'image choisie à la main (exactement), sinon
+    pour un clap automatique l'image juste après le contact (mains jointes), l'image du flash."""
+    if c.manual_t is not None:
+        return c.manual_t
+    dt = 0.0 if c.selected.kind == "flash" else 1.5 * an.period
+    return c.selected.t + dt
+
+
+def _image_time(an: Analysis, s: shots_mod.Shot) -> float:
+    c = shown_clap(an, s.index)
+    t = clap_image_t(an, c) if c is not None else (s.start + s.end) / 2
+    return min(max(t, s.start), s.end - an.period)
+
+
+def refresh_images(an: Analysis, shot_ids: list[int] | None = None) -> None:
+    """(Re)lit l'image représentative des plans demandés (tous par défaut), d'après la sélection
+    actuelle des claps : à appeler après un réglage manuel."""
+    for cid in an.camera_ids():
+        aggregate_camera(an, cid)   # remplit clap.selected
+    shots = [s for s in an.shots if shot_ids is None or s.index in shot_ids]
+    targets = {s.index: _image_time(an, s) for s in shots}
+    if not targets:
+        return
+    frames = media.grab_frames(an.info.path, list(targets.values()))
+    for si, t in targets.items():
+        if t in frames:
+            an.shot_images[si] = _crop(frames[t], an.shots[si].region)

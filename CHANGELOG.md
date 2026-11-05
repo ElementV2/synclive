@@ -4,6 +4,55 @@ Toutes les évolutions notables de SyncLive sont listées ici.
 Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), numérotation [SemVer](https://semver.org/lang/fr/) :
 `MAJEUR.MINEUR.CORRECTIF` (correctif = corrections, mineur = nouveautés compatibles, majeur = changements incompatibles).
 
+## [1.3.2] - 2026-11-05
+
+### Ajouté
+- **Supprimer une source** où il ne se passe rien (bouton sur chaque carte) : elle disparaît des
+  résultats, du plan de correction et de l'export ; « Annuler la dernière modification » la remet.
+- **Réglage de l'image du clap plus lisible** : « Éclaircir » et « Zoom sur les mains » (à cocher
+  au besoin), la bande ne montre que les vraies images d'une caméra plus lente que le fichier
+  (pas ses copies), bande de 9, 15 ou 21 images, ± 1, 2 ou 4 s autour du son.
+- **Lecteur dans le réglage du clap** : timeline à faire glisser, lecture / pause (Espace) à
+  vitesse normale, ×1/2 ou ×1/4, en boucle sur la séquence chargée, et « Choisir cette image ».
+- **Son du clap visible et audible** : forme d'onde au-dessus de la timeline, avec les sons
+  détectés comme claps (en orange, le clap courant en trait plein), l'image affichée et l'image
+  choisie ; clic sur la forme d'onde pour s'y placer. Le son est joué avec la vidéo (ralenti en
+  ×1/2 et ×1/4) et « Écouter le clap » rejoue image et son de 0,5 s avant à 0,5 s après.
+- **L'aperçu de la source suit le réglage** : après un réglage à la main (ou un autre candidat
+  choisi, un clap écarté, une annulation), la carte et l'export montrent l'image retenue, plus
+  celle de l'automatique.
+
+### Modifié
+- **Page réseau des mires** : le MP4 du format choisi est préparé dès l'ouverture de la page (et
+  à chaque changement de format), avec l'avancement affiché ; « Télécharger le MP4 » et « Lancer
+  en plein écran » montrent « Préparation… 42 % » puis démarrent tout seuls. Format par défaut :
+  Full HD 59.94 (page et onglet Mires).
+- Onglet Mires : « N° de la 1re source » retiré (les sources sont toujours numérotées à partir
+  de 1) et la durée de la boucle s'affiche en secondes (« 16 s »), par pas de 8 s.
+
+### Corrigé
+- Réglage du clap : après avoir déplacé la timeline, un clic dans la bande pouvait rattacher
+  l'image au mauvais son (référence prise sur les claps automatiques d'une source ambiguë) ou
+  retenir une image voisine. L'image cliquée est maintenant celle retenue, et la vignette
+  affiche la valeur exacte obtenue (avec le son auquel elle sera rattachée). La vidéo ne change
+  plus de taille quand le texte ou les vignettes changent, et la lecture ×1 avec « Éclaircir »
+  affiche bien toutes les images.
+- « Régler l'image du clap… » s'ouvre sur le même clap et la même image que la carte (elle
+  s'ouvrait sur le premier clap de la liste, une autre image que celle montrée).
+- Réglage à la main avec des claps rapprochés : l'image de contact choisie était rattachée au son
+  sélectionné dans la liste, même si elle appartenait au clap suivant (−963 ms au lieu de +22 ms).
+  Elle est maintenant rattachée au son de clap qui lui correspond, et la fenêtre le signale.
+- Caméra lente (20 i/s réels dans un fichier à 60) : chaque image réelle passait pour l'arrêt
+  d'un clap, si bien que n'importe quel bruit trouvait une image à associer. Résultat : fausses
+  caméras mesurées, plan coupé en deux en plein clap. Seules les images réellement nouvelles
+  sont maintenant analysées, à la précision de la caméra (vidéo OBS réelle : caméra du bureau
+  mesurée à +4 ms au lieu de « ambigu »).
+- Claps trop rapprochés pour être appariés : « À RÉGLER » au lieu de « AMBIGU : +490 ms ou
+  −117 ms » (deux valeurs dont l'une est fausse), et le bouton « Régler l'image du clap… » est mis
+  en avant sur la carte.
+- Source avec un seul clap et plusieurs mouvements aussi nets (décor animé, projection) :
+  « À VÉRIFIER » au lieu d'un décalage inventé.
+
 ## [1.3.1] - 2026-11-05
 
 ### Modifié
@@ -98,6 +147,7 @@ Première version (remplacée par la 1.1.0, qui apporte la mise à jour automati
 - Export : images annotées, récapitulatif, CSV, JSON.
 - Exécutable Windows autonome (licence GPL-3.0, composants tiers documentés).
 
+[1.3.2]: https://github.com/ElementV2/synclive/releases/tag/v1.3.2
 [1.3.1]: https://github.com/ElementV2/synclive/releases/tag/v1.3.1
 [1.3.0]: https://github.com/ElementV2/synclive/releases/tag/v1.3.0
 [1.2.0]: https://github.com/ElementV2/synclive/releases/tag/v1.2.0

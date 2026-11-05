@@ -319,3 +319,33 @@ def decode_range(path: str, t0: float, t1: float, region=(0.0, 0.0, 1.0, 1.0),
             frames.append(np.ascontiguousarray(_rotate(crop, int(getattr(frame, "rotation", 0) or 0))))
             times.append(float(t))
     return times, frames
+
+
+def decode_audio_range(path: str, stream_index: int, t0: float, t1: float) -> tuple[np.ndarray, int, float]:
+    """Son mono float32 entre t0 et t1 (s), avec sa fréquence et l'instant de son 1er échantillon.
+    Même horloge que decode_audio (horodatage des trames audio du fichier)."""
+    with av.open(path) as c:
+        if not c.streams.audio or stream_index >= len(c.streams.audio):
+            return np.zeros(0, np.float32), 48000, t0
+        st = c.streams.audio[stream_index]
+        rate = st.codec_context.sample_rate or 48000
+        resampler = av.AudioResampler(format="flt", layout="mono", rate=rate)
+        c.seek(max(0, int(max(0.0, t0 - 0.5) / st.time_base)), stream=st, backward=True, any_frame=False)
+        chunks: list[np.ndarray] = []
+        start: float | None = None
+        for frame in c.decode(st):
+            if frame.time is None:
+                continue
+            if frame.time > t1 + 0.1:
+                break
+            for out in resampler.resample(frame):
+                a = out.to_ndarray().reshape(-1).astype(np.float32, copy=False)
+                if start is None:
+                    start = float(frame.time)
+                chunks.append(a)
+        if not chunks or start is None:
+            return np.zeros(0, np.float32), rate, t0
+        sig = np.concatenate(chunks)
+        i0 = max(0, int(round((t0 - start) * rate)))
+        i1 = max(i0, int(round((t1 - start) * rate)))
+        return sig[i0:i1], rate, start + i0 / rate

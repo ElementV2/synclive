@@ -225,6 +225,28 @@ def test_clap_right_after_a_slower_gesture_is_not_swallowed():
     assert any(-300 <= o <= -240 for o in offs), offs
 
 
+def test_slow_camera_repeated_frames_are_not_claps():
+    """Caméra à 20 i/s dans un fichier à 60 : le mouvement retombe à 0 à chaque image répétée.
+    Chaque image réelle ne doit pas devenir un « arrêt net » de clap (vidéo OBS du 12/10 : un
+    candidat toutes les 50 ms, n'importe quel bruit trouvait son appariement)."""
+    from types import SimpleNamespace
+    import numpy as np
+    from synclive import visual
+    per = 1001 / 60000
+    real_e = [1.0, 1.2, 1.0, 1.1, 3.0, 8.0, 14.0, 16.0, 2.0, 1.2, 1.0, 1.1, 1.0, 1.2, 1.0, 1.1]
+    n = 3 * len(real_e)
+    e = np.zeros(n)
+    real = np.zeros(n, bool)
+    real[::3] = True
+    e[::3] = real_e
+    t = 1.0 + np.arange(n) * per
+    sig = SimpleNamespace(t=t, real=real, energy=lambda *a, **k: (e, 0, n - 1))
+    got = visual.clap_candidates(sig, 1.4, 0.6)
+    assert len(got) <= 2, [round(v.t, 3) for v in got]
+    contact = t[3 * 7]          # dernière image réelle en mouvement, avant l'arrêt
+    assert any(abs(v.t - contact) <= 3 * per for v in got), [round(v.t, 3) for v in got]
+
+
 def test_isolated_tonal_noise_is_not_a_beep_train():
     """Bruit de plateau tonal (voix, choc) près d'une mire sans son : pas de bips. Un vrai train :
     deux bips SyncLive, ou deux sons de même hauteur (mire d'une autre marque)."""
@@ -290,6 +312,13 @@ def test_manual_clap_frame_overrides_auto(tmp_path):
     assert cam2.manual and abs(cam2.offset - (auto + 3 * per)) < 0.002
     assert cam2.uncertainty <= 0.5 * per + 1e-9          # ± ½ image : vérifié à l'œil
     assert "à la main" in export.status(cam2, 30000 / 1001)[1]
+    # l'aperçu montre exactement l'image choisie à la main, plus celle de l'automatique
+    import numpy as np
+    first = next(cl for cl in cam.claps if cl.manual_t is not None)
+    analysis.refresh_images(an, [first.shot])
+    want = media.grab_frames(str(vid), [first.manual_t])[first.manual_t]
+    got = next(x for x in an.cameras() if x.id == cam.id).image
+    assert got is not None and got.shape == want.shape and np.array_equal(got, want)
     for cl in cam.claps:
         cl.manual_t = None
     cam3 = next(x for x in an.cameras() if x.id == cam.id)

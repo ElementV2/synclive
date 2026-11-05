@@ -117,7 +117,7 @@ def both(sec: float | None, fps: float, signed: bool = False) -> str:
 def status(cam: CameraResult, fps: float) -> tuple[str, str]:
     """(constat en majuscules, explication) : qui est en retard, l'image ou le son."""
     if getattr(cam, "ambiguous", None):
-        return "AMBIGU", cam.ambiguous
+        return ("À RÉGLER" if cam.ambiguous.startswith("ambigu") else "À VÉRIFIER"), cam.ambiguous
     if cam.offset is None:
         return "NON MESURÉE", ("aucun bip associé à un flash : le son de cette machine n'a pas été enregistré ?"
                                if cam.kind == "mire" else "aucun clap à la fois visible et audible")

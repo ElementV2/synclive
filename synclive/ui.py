@@ -198,6 +198,7 @@ class CameraCard(QFrame):
     renamed = Signal(int, str)
     merge = Signal(int, int)
     adjust = Signal(int)
+    remove = Signal(int)
 
     def __init__(self, cam: analysis.CameraResult, an: analysis.Analysis, others: list[tuple[int, str]],
                  plan: export.CorrectionPlan | None = None):
@@ -227,7 +228,16 @@ class CameraCard(QFrame):
         adj.setToolTip("Bande d'images autour du clap : clique l'image où les mains se touchent "
                        "si l'automatique s'est trompé")
         adj.clicked.connect(lambda: self.adjust.emit(self.cam.id))
-        lay.addWidget(adj)
+        if cam.ambiguous and not cam.manual:
+            adj.setObjectName("primary")      # pas de mesure sûre : c'est l'action à faire
+        rm = QPushButton("Supprimer cette source")
+        rm.setToolTip("Aucun clap n'est visible sur cette source : la retirer des résultats, du plan "
+                      "de correction et de l'export (« Annuler la dernière modification » la remet)")
+        rm.clicked.connect(lambda: self.remove.emit(self.cam.id))
+        btns = QHBoxLayout()
+        btns.addWidget(adj, 1)
+        btns.addWidget(rm)
+        lay.addLayout(btns)
         if not cam.claps:   # place gardée : toutes les cartes d'une ligne restent alignées
             sp = adj.sizePolicy()
             sp.setRetainSizeWhenHidden(True)
@@ -435,6 +445,7 @@ class MainWindow(QMainWindow):
             card.renamed.connect(self._rename)
             card.merge.connect(self._merge)
             card.adjust.connect(self._adjust)
+            card.remove.connect(self._remove)
             self.card_widgets.append(card)
         self._grid_cols = 0
         self._layout_cards()
@@ -454,12 +465,17 @@ class MainWindow(QMainWindow):
             for cid, nm in names.items():
                 cb.addItem(nm, cid)
             cb.addItem("Nouvelle source", -1)
-            cb.setCurrentIndex(list(names).index(s.camera))
+            if s.camera in names:
+                cb.setCurrentIndex(list(names).index(s.camera))
+            else:   # source supprimée : choisir une source la remet dans les résultats
+                cb.addItem(f"{an.camera_names.get(s.camera, 'source')} (supprimée)", s.camera)
+                cb.setCurrentIndex(cb.count() - 1)
             cb.activated.connect(lambda i, si=s.index, c=cb: self._move_shot(si, c.itemData(i)))
             self.shots_table.setCellWidget(r, 3, cb)
 
         fps = an.info.fps_float
-        cam_of_shot = {s.index: names[s.camera] for s in an.shots}
+        cam_of_shot = {s.index: names.get(s.camera, f"{an.camera_names.get(s.camera, 'source')} (supprimée)")
+                       for s in an.shots}
         self.claps_table.blockSignals(True)
         self.claps_table.setRowCount(0)
         self.claps_table.setRowCount(len(an.claps))
@@ -605,19 +621,24 @@ class MainWindow(QMainWindow):
     def _snapshot(self) -> None:
         an = self.an
         self._undo.append(([s.camera for s in an.shots], dict(an.camera_names),
-                           [(c.excluded, c.forced, c.manual_t) for c in an.claps]))
+                           [(c.excluded, c.forced, c.manual_t) for c in an.claps], set(an.removed)))
         del self._undo[:-50]
         self.undo_btn.setEnabled(True)
 
     def undo(self) -> None:
         if not (self.an and self._undo):
             return
-        cams, names, claps = self._undo.pop()
+        cams, names, claps, removed = self._undo.pop()
+        self.an.removed = removed
         for s, c in zip(self.an.shots, cams):
             s.camera = c
         self.an.camera_names = names
+        changed = set()
         for c, (ex, fo, mt) in zip(self.an.claps, claps):
+            if (c.excluded, c.forced, c.manual_t) != (ex, fo, mt):
+                changed.add(c.shot)
             c.excluded, c.forced, c.manual_t = ex, fo, mt
+        self._refresh_images(changed)
         self.undo_btn.setEnabled(bool(self._undo))
         self.refresh_later()
 
@@ -633,10 +654,18 @@ class MainWindow(QMainWindow):
             self.an.merge_cameras(src, dst)
             self.refresh_later()
 
+    def _remove(self, cid: int) -> None:
+        if self.an is not None:
+            self._snapshot()
+            self.an.remove_camera(cid)
+            self.refresh_later()
+
     def _move_shot(self, shot: int, cid) -> None:
         if self.an is None or cid == self.an.shots[shot].camera:
             return
         self._snapshot()
+        if cid != -1:
+            self.an.removed.discard(cid)
         self.an.move_shot(shot, None if cid == -1 else cid)
         self.refresh_later()
 
@@ -645,6 +674,7 @@ class MainWindow(QMainWindow):
             self._snapshot()
             self.an.claps[clap_id].forced = cand
             self.an.claps[clap_id].manual_t = None
+            self._refresh_images({self.an.claps[clap_id].shot})
             self.refresh_later()
 
     def _adjust(self, cid: int) -> None:
@@ -669,7 +699,22 @@ class MainWindow(QMainWindow):
             if t is not None:
                 c.excluded = False
                 c.forced = None
+        # l'aperçu montre l'image choisie (celle du clap réglé en dernier), pas celle de l'automatique
+        last = dlg.last_changed if dlg.last_changed in ch else next(iter(ch))
+        self.an.image_clap[self.an.claps[last].shot] = last
+        self._refresh_images({self.an.claps[i].shot for i in ch})
         self.refresh_later()
+
+    def _refresh_images(self, shots: set[int]) -> None:
+        if not shots or self.an is None:
+            return
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            analysis.refresh_images(self.an, sorted(shots))
+        except Exception:
+            pass        # l'aperçu garde l'ancienne image ; la mesure, elle, est à jour
+        finally:
+            QApplication.restoreOverrideCursor()
 
     def _clap_toggled(self, item: QTableWidgetItem) -> None:
         if self.an is None or item.column() != 0:
@@ -677,6 +722,7 @@ class MainWindow(QMainWindow):
         cid = item.data(Qt.UserRole)
         self._snapshot()
         self.an.claps[cid].excluded = item.checkState() != Qt.Checked
+        self._refresh_images({self.an.claps[cid].shot})
         self.refresh_later()
 
     def do_export(self) -> None:

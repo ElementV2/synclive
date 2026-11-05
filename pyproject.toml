@@ -1,6 +1,6 @@
 [project]
 name = "synclive"
-version = "1.3.1"
+version = "1.3.2"
 description = "Mesure du décalage son/image par source (caméras, PC, consoles) et mires de synchro."
 readme = "README.md"
 license = "GPL-3.0-or-later"
