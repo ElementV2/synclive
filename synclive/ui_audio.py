@@ -72,6 +72,7 @@ class WaveView(QWidget):
     placer à cet instant (signal `seek`)."""
 
     seek = Signal(float)
+    released = Signal(float)     # bouton relâché : l'image à cet instant est choisie
 
     MARGIN = 9          # px : aligné sur la course de la poignée de la timeline
 
@@ -175,3 +176,7 @@ class WaveView(QWidget):
     def mouseMoveEvent(self, e):
         if e.buttons() & Qt.LeftButton:
             self.seek.emit(self.t_of(e.position().x()))
+
+    def mouseReleaseEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            self.released.emit(self.t_of(e.position().x()))

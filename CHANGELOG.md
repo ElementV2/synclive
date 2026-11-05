@@ -31,6 +31,8 @@ Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), num
   de 1) et la durée de la boucle s'affiche en secondes (« 16 s »), par pas de 8 s.
 
 ### Corrigé
+- Réglage du clap : déplacer la timeline (ou la forme d'onde) choisit maintenant l'image, comme les
+  flèches. Pendant un glisser l'image suit, et c'est celle où on relâche qui est retenue.
 - Image du clap réglée à la main : c'est maintenant la mesure de la source, à ± ½ image réelle. Les
   claps automatiques de cette source (souvent mal appariés quand on a dû régler) ne la brouillent
   plus : un réglage à −34 ms n'est plus noyé dans une marge de ± 35 ms et donne bien sa correction.

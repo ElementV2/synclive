@@ -158,9 +158,9 @@ class ClapFrameDialog(QDialog):
         self._hide = bool(cam.source_fps)
         v.addLayout(top)
 
-        help_ = QLabel("Lis la séquence ou fais glisser la timeline, puis choisis l'image où les mains "
-                       "se touchent (ou où le flash apparaît) : clic dans la bande, « Choisir cette "
-                       "image » ou flèches ← →. Espace : lecture / pause.")
+        help_ = QLabel("Choisis l'image où les mains se touchent (ou où le flash apparaît) : timeline ou "
+                       "forme d'onde (l'image où tu relâches est choisie), clic dans la bande, flèches ← → "
+                       "ou « Choisir cette image » après une lecture. Espace : lecture / pause.")
         help_.setWordWrap(True)
         help_.setStyleSheet("color:#8A8780;")
         v.addWidget(help_)
@@ -181,11 +181,14 @@ class ClapFrameDialog(QDialog):
         self.timeline = QSlider(Qt.Horizontal)
         self.timeline.setMinimum(0)
         self.timeline.valueChanged.connect(self._seek)
+        # timeline relâchée : l'image affichée devient l'image choisie (comme les flèches)
+        self.timeline.sliderReleased.connect(lambda: self._choose(self.timeline.value()))
         # son au-dessus de la timeline, sur le même axe : on voit où tombent les claps détectés
         tl = QVBoxLayout()
         tl.setSpacing(2)
         self.wave = WaveView()
         self.wave.seek.connect(self._seek_time)
+        self.wave.released.connect(self._choose_time)
         tl.addWidget(self.wave)
         tl.addWidget(self.timeline)
         player.addLayout(tl, 1)
@@ -584,18 +587,30 @@ class ClapFrameDialog(QDialog):
 
     # --- lecteur -------------------------------------------------------------------
     def _seek_time(self, t: float) -> None:
+        """Clic ou glisser sur la forme d'onde : on affiche (le choix se fait au relâchement)."""
+        self._pause()
         times = self._data()[0]
         if times:
-            self._seek(self._index_at(times, t))
+            self.cur = self._index_at(times, t)
+            self._show()
 
     def _seek(self, k: int) -> None:
-        """Timeline déplacée à la main : on affiche cette image (sans changer le choix)."""
+        """Timeline déplacée à la main : on affiche l'image ; pendant un glisser, elle n'est choisie
+        qu'au relâchement (sinon chaque image survolée deviendrait l'image du clap)."""
         self._pause()
         times = self._data()[0]
         if not times:
             return
+        if not self.timeline.isSliderDown():
+            self._choose(k)              # clic sur la timeline, touche du clavier : choisie tout de suite
+            return
         self.cur = int(np.clip(k, 0, len(times) - 1))
         self._show()
+
+    def _choose_time(self, t: float) -> None:
+        times = self._data()[0]
+        if times:
+            self._choose(self._index_at(times, t))
 
     def _toggle_play(self) -> None:
         if self._timer.isActive():

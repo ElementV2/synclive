@@ -75,11 +75,11 @@ def test_timeline_then_button_and_arrows(dialog):
     d.clap_box.setCurrentIndex(0)
     app.processEvents()
     n = len(d._data()[0])
-    d.timeline.setValue(n // 3)
+    d.timeline.setValue(n // 3)                     # clic sur la timeline : choisie, comme les flèches
     app.processEvents()
     shown = float(d.time_lbl.text().split()[0])
-    before = dict(d.chosen)
-    assert d.chosen == before                       # bouger la timeline ne choisit rien
+    c = d._clap()
+    assert abs(d.chosen[c.id] - shown) < 0.0006
     d.pick_btn.click()
     app.processEvents()
     c = d._clap()
@@ -91,3 +91,37 @@ def test_timeline_then_button_and_arrows(dialog):
     QTest.keyClick(d, Qt.Key_Left)
     app.processEvents()
     assert d._clap() is c and abs(d.chosen[c.id] - t0) < 1e-6
+
+
+def test_timeline_drag_chooses_on_release_only(dialog):
+    """Glisser la timeline ou la forme d'onde : l'image suit, elle n'est choisie qu'au relâchement,
+    et c'est exactement celle affichée à ce moment-là."""
+    from PySide6.QtCore import QPointF, Qt
+    from PySide6.QtTest import QTest
+    app, d = dialog
+    d.chosen = {c.id: c.manual_t for c in d.claps}
+    d.clap_box.setCurrentIndex(0)
+    app.processEvents()
+    c = d._clap()
+    n = len(d._data()[0])
+    before = d.chosen[c.id]
+    d.timeline.setSliderDown(True)                   # glisser en cours
+    for k in (n // 4, n // 3, n // 2):
+        d.timeline.setValue(k)
+        app.processEvents()
+        assert d.chosen[c.id] == before              # rien n'est choisi pendant le glisser
+    shown = float(d.time_lbl.text().split()[0])
+    d.timeline.setSliderDown(False)                  # relâché
+    app.processEvents()
+    c = d._clap()
+    assert abs(d.chosen[c.id] - shown) < 0.0006
+    # forme d'onde : glisser puis relâcher
+    times = d._data()[0]
+    x = d.wave.x_of(times[len(times) // 3])
+    QTest.mousePress(d.wave, Qt.LeftButton, pos=QPointF(x, 20).toPoint())
+    QTest.mouseMove(d.wave, QPointF(x + 30, 20).toPoint())
+    app.processEvents()
+    QTest.mouseRelease(d.wave, Qt.LeftButton, pos=QPointF(x + 30, 20).toPoint())
+    app.processEvents()
+    c = d._clap()
+    assert abs(d.chosen[c.id] - float(d.time_lbl.text().split()[0])) < 0.0006
