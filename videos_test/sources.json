@@ -1,0 +1,760 @@
+{
+  "clips": {
+    "droidcam_1080p30_01-00-30.mp4": {
+      "description": "Téléphone via DroidCam (wifi), 1080p 29.97, 3 claps",
+      "fps": "29.97",
+      "fps_exact": 29.97002997002997,
+      "version": 2,
+      "duree_s": 5.038,
+      "cameras": [
+        {
+          "nom": "CAM 1",
+          "type": "camera",
+          "decalage_ms": -97.8,
+          "incertitude_ms": 51.5,
+          "cadence_reelle_ips": null,
+          "ambigu": null,
+          "claps_s": [
+            1.6633,
+            2.4952,
+            3.1895
+          ],
+          "claps": [
+            {
+              "t": 1.6633,
+              "decalage_ms": -97.8
+            },
+            {
+              "t": 2.4952,
+              "decalage_ms": -121.9
+            },
+            {
+              "t": 3.1895,
+              "decalage_ms": -80.4
+            }
+          ],
+          "claps_audio_s": [
+            1.6633,
+            2.4952,
+            3.1895
+          ]
+        }
+      ],
+      "vignette_ok": true
+    },
+    "droidcam_1080p30_loin_01-00-49.mp4": {
+      "description": "Téléphone via DroidCam, 1080p 29.97, claps loin",
+      "fps": "29.97",
+      "fps_exact": 29.97002997002997,
+      "version": 2,
+      "duree_s": 8.341,
+      "cameras": [
+        {
+          "nom": "CAM 1",
+          "type": "camera",
+          "decalage_ms": -70.3,
+          "incertitude_ms": 25.9,
+          "cadence_reelle_ips": null,
+          "ambigu": null,
+          "claps_s": [
+            4.0899,
+            4.8928
+          ],
+          "claps": [
+            {
+              "t": 4.0899,
+              "decalage_ms": -73.4
+            },
+            {
+              "t": 4.8928,
+              "decalage_ms": -67.2
+            }
+          ],
+          "claps_audio_s": [
+            3.3905,
+            4.0899,
+            4.8928
+          ]
+        }
+      ],
+      "vignette_ok": true
+    },
+    "erune_cam1.mp4": {
+      "description": "ERUNE caméra 1 (extrait 19,6-31,3 s), 2 claps",
+      "fps": "29.97",
+      "fps_exact": 29.97002997002997,
+      "version": 2,
+      "duree_s": 11.645,
+      "cameras": [
+        {
+          "nom": "CAM 1",
+          "type": "camera",
+          "decalage_ms": -95.3,
+          "incertitude_ms": 33.4,
+          "cadence_reelle_ips": null,
+          "ambigu": null,
+          "claps_s": [
+            10.7771
+          ],
+          "claps": [
+            {
+              "t": 10.7771,
+              "decalage_ms": -95.3
+            }
+          ],
+          "claps_audio_s": [
+            8.4973,
+            10.7771
+          ]
+        }
+      ],
+      "vignette_ok": true
+    },
+    "erune_cam2.mp4": {
+      "description": "ERUNE caméra 2 (extrait), 1 clap",
+      "fps": "29.97",
+      "fps_exact": 29.97002997002997,
+      "version": 2,
+      "duree_s": 4.471,
+      "cameras": [
+        {
+          "nom": "CAM 1",
+          "type": "camera",
+          "decalage_ms": -97.0,
+          "incertitude_ms": 33.4,
+          "cadence_reelle_ips": null,
+          "ambigu": null,
+          "claps_s": [
+            3.765
+          ],
+          "claps": [
+            {
+              "t": 3.765,
+              "decalage_ms": -97.0
+            }
+          ],
+          "claps_audio_s": [
+            3.765
+          ]
+        }
+      ],
+      "vignette_ok": true
+    },
+    "erune_cam3.mp4": {
+      "description": "ERUNE caméra 3 (extrait), 1 clap",
+      "fps": "29.97",
+      "fps_exact": 29.97002997002997,
+      "version": 2,
+      "duree_s": 3.203,
+      "cameras": [
+        {
+          "nom": "CAM 1",
+          "type": "camera",
+          "decalage_ms": -97.4,
+          "incertitude_ms": 33.4,
+          "cadence_reelle_ips": null,
+          "ambigu": null,
+          "claps_s": [
+            2.0583
+          ],
+          "claps": [
+            {
+              "t": 2.0583,
+              "decalage_ms": -97.4
+            }
+          ],
+          "claps_audio_s": [
+            2.0583
+          ]
+        }
+      ],
+      "vignette_ok": true
+    },
+    "erune_cam4.mp4": {
+      "description": "ERUNE caméra 4 (extrait 44,3-50,7 s), 1 clap ; deux faux claps audio en tout début de clip (son coupé en plein bruit)",
+      "fps": "29.97",
+      "fps_exact": 29.97002997002997,
+      "version": 2,
+      "duree_s": 6.34,
+      "cameras": [
+        {
+          "nom": "CAM 1",
+          "type": "camera",
+          "decalage_ms": -115.5,
+          "incertitude_ms": 34.1,
+          "cadence_reelle_ips": null,
+          "ambigu": null,
+          "claps_s": [
+            5.4385
+          ],
+          "claps": [
+            {
+              "t": 5.4385,
+              "decalage_ms": -115.5
+            }
+          ],
+          "claps_audio_s": [
+            0.1824,
+            0.4511,
+            5.4385
+          ]
+        }
+      ],
+      "vignette_ok": true
+    },
+    "erune_cam5.mp4": {
+      "description": "ERUNE caméra 5 (extrait), 1 clap",
+      "fps": "29.97",
+      "fps_exact": 29.97002997002997,
+      "version": 2,
+      "duree_s": 7.374,
+      "cameras": [
+        {
+          "nom": "CAM 1",
+          "type": "camera",
+          "decalage_ms": -74.6,
+          "incertitude_ms": 33.4,
+          "cadence_reelle_ips": null,
+          "ambigu": null,
+          "claps_s": [
+            1.4653
+          ],
+          "claps": [
+            {
+              "t": 1.4653,
+              "decalage_ms": -74.6
+            }
+          ],
+          "claps_audio_s": [
+            1.4653
+          ]
+        }
+      ],
+      "vignette_ok": true
+    },
+    "erune_mire_photojoseph.mp4": {
+      "description": "Mire tierce PhotoJoseph AVsyncTest 29.97 (bips), extrait 58-84 s",
+      "fps": "29.97",
+      "fps_exact": 29.97002997002997,
+      "version": 2,
+      "duree_s": 25.959,
+      "cameras": [
+        {
+          "nom": "MIRE 1",
+          "type": "mire",
+          "decalage_ms": 146.9,
+          "incertitude_ms": 8.8,
+          "cadence_reelle_ips": null,
+          "ambigu": null,
+          "claps_s": [
+            10.924,
+            11.925,
+            12.926,
+            13.927,
+            14.928,
+            15.929,
+            16.93,
+            18.932,
+            22.313,
+            23.314
+          ],
+          "claps": [
+            {
+              "t": 10.924,
+              "decalage_ms": 146.9
+            },
+            {
+              "t": 11.925,
+              "decalage_ms": 146.9
+            },
+            {
+              "t": 12.926,
+              "decalage_ms": 146.9
+            },
+            {
+              "t": 13.927,
+              "decalage_ms": 146.9
+            },
+            {
+              "t": 14.928,
+              "decalage_ms": 146.9
+            },
+            {
+              "t": 15.929,
+              "decalage_ms": 146.9
+            },
+            {
+              "t": 16.93,
+              "decalage_ms": 146.9
+            },
+            {
+              "t": 18.932,
+              "decalage_ms": 146.9
+            },
+            {
+              "t": 22.313,
+              "decalage_ms": 157.9
+            },
+            {
+              "t": 23.314,
+              "decalage_ms": 157.9
+            }
+          ],
+          "claps_audio_s": [
+            10.924,
+            11.925,
+            12.926,
+            13.927,
+            14.928,
+            15.929,
+            16.93,
+            18.932,
+            22.313,
+            23.314
+          ]
+        }
+      ],
+      "vignette_ok": true
+    },
+    "erune_mire_photojoseph_faible.mp4": {
+      "description": "Mire PhotoJoseph à l'écran mais SANS son de mire (bruit de plateau à -55 dB) : doit sortir NON MESURÉE",
+      "fps": "29.97",
+      "fps_exact": 29.97002997002997,
+      "version": 2,
+      "duree_s": 19.553,
+      "cameras": [
+        {
+          "nom": "MIRE 1",
+          "type": "mire",
+          "decalage_ms": null,
+          "incertitude_ms": null,
+          "cadence_reelle_ips": null,
+          "ambigu": null,
+          "claps_s": [],
+          "claps": [],
+          "claps_audio_s": []
+        }
+      ],
+      "vignette_ok": false,
+      "utiliser": false
+    },
+    "erune_plateau_5cams_2mires_17-59-26.mp4": {
+      "description": "Production ERUNE : mire PhotoJoseph (son faible), 5 caméras plateau en coupes franches, mire PhotoJoseph ; 6 pistes audio",
+      "fps": "29.97",
+      "fps_exact": 29.970421581554472,
+      "version": 2,
+      "duree_s": 84.183,
+      "cameras": [
+        {
+          "nom": "MIRE 1",
+          "type": "mire",
+          "decalage_ms": null,
+          "incertitude_ms": null,
+          "cadence_reelle_ips": null,
+          "ambigu": null,
+          "claps_s": [],
+          "claps": [],
+          "claps_audio_s": []
+        },
+        {
+          "nom": "CAM 1",
+          "type": "camera",
+          "decalage_ms": -94.4,
+          "incertitude_ms": 33.4,
+          "cadence_reelle_ips": null,
+          "ambigu": null,
+          "claps_s": [
+            30.3975
+          ],
+          "claps": [
+            {
+              "t": 30.3975,
+              "decalage_ms": -94.4
+            }
+          ],
+          "claps_audio_s": [
+            28.1176,
+            30.3975
+          ]
+        },
+        {
+          "nom": "CAM 2",
+          "type": "camera",
+          "decalage_ms": -98.0,
+          "incertitude_ms": 33.4,
+          "cadence_reelle_ips": null,
+          "ambigu": null,
+          "claps_s": [
+            35.0954
+          ],
+          "claps": [
+            {
+              "t": 35.0954,
+              "decalage_ms": -98.0
+            }
+          ],
+          "claps_audio_s": [
+            35.0954
+          ]
+        },
+        {
+          "nom": "CAM 3",
+          "type": "camera",
+          "decalage_ms": -96.8,
+          "incertitude_ms": 33.4,
+          "cadence_reelle_ips": null,
+          "ambigu": null,
+          "claps_s": [
+            37.9287
+          ],
+          "claps": [
+            {
+              "t": 37.9287,
+              "decalage_ms": -96.8
+            }
+          ],
+          "claps_audio_s": [
+            37.9287
+          ]
+        },
+        {
+          "nom": "CAM 4",
+          "type": "camera",
+          "decalage_ms": -116.2,
+          "incertitude_ms": 34.0,
+          "cadence_reelle_ips": null,
+          "ambigu": null,
+          "claps_s": [
+            49.7488
+          ],
+          "claps": [
+            {
+              "t": 49.7488,
+              "decalage_ms": -116.2
+            }
+          ],
+          "claps_audio_s": [
+            49.7488
+          ]
+        },
+        {
+          "nom": "CAM 5",
+          "type": "camera",
+          "decalage_ms": -71.8,
+          "incertitude_ms": 33.4,
+          "cadence_reelle_ips": null,
+          "ambigu": null,
+          "claps_s": [
+            52.1857
+          ],
+          "claps": [
+            {
+              "t": 52.1857,
+              "decalage_ms": -71.8
+            }
+          ],
+          "claps_audio_s": [
+            52.1857
+          ]
+        },
+        {
+          "nom": "MIRE 2",
+          "type": "mire",
+          "decalage_ms": 147.7,
+          "incertitude_ms": 8.8,
+          "cadence_reelle_ips": null,
+          "ambigu": null,
+          "claps_s": [
+            69.0837,
+            70.0847,
+            71.0857,
+            72.0867,
+            73.0877,
+            74.0887,
+            75.0897,
+            77.0917,
+            80.4727,
+            81.4737
+          ],
+          "claps": [
+            {
+              "t": 69.0837,
+              "decalage_ms": 147.7
+            },
+            {
+              "t": 70.0847,
+              "decalage_ms": 147.7
+            },
+            {
+              "t": 71.0857,
+              "decalage_ms": 147.7
+            },
+            {
+              "t": 72.0867,
+              "decalage_ms": 147.7
+            },
+            {
+              "t": 73.0877,
+              "decalage_ms": 147.7
+            },
+            {
+              "t": 74.0887,
+              "decalage_ms": 147.7
+            },
+            {
+              "t": 75.0897,
+              "decalage_ms": 147.7
+            },
+            {
+              "t": 77.0917,
+              "decalage_ms": 147.7
+            },
+            {
+              "t": 80.4727,
+              "decalage_ms": 158.7
+            },
+            {
+              "t": 81.4737,
+              "decalage_ms": 158.7
+            }
+          ],
+          "claps_audio_s": [
+            69.0837,
+            70.0847,
+            71.0857,
+            72.0867,
+            73.0877,
+            74.0887,
+            75.0897,
+            77.0917,
+            80.4727,
+            81.4737
+          ]
+        }
+      ],
+      "vignette_ok": false
+    },
+    "mosaique_droidcam_webcam_fond_noir_01-06-50.mp4": {
+      "description": "Mosaïque OBS 2x2 non alignée, fond noir : DroidCam haut droite, webcam bas gauche (claps espacés 0,7 s -> webcam ambiguë)",
+      "fps": "29.97",
+      "fps_exact": 29.97002997002997,
+      "version": 2,
+      "duree_s": 10.377,
+      "cameras": [
+        {
+          "nom": "CAM 1",
+          "type": "camera",
+          "decalage_ms": -81.5,
+          "incertitude_ms": 61.9,
+          "cadence_reelle_ips": null,
+          "ambigu": null,
+          "claps_s": [
+            6.6337,
+            7.3365
+          ],
+          "claps": [
+            {
+              "t": 6.6337,
+              "decalage_ms": -60.6
+            },
+            {
+              "t": 7.3365,
+              "decalage_ms": -102.4
+            }
+          ],
+          "claps_audio_s": [
+            6.6337,
+            7.3365,
+            8.0594
+          ]
+        },
+        {
+          "nom": "CAM 2",
+          "type": "camera",
+          "decalage_ms": null,
+          "incertitude_ms": 47.2,
+          "cadence_reelle_ips": 15.0,
+          "ambigu": "ambigu : +557 ms ou -165 ms, claps espacés de 0,72 s (espacer les claps d'au moins 1 s)",
+          "claps_s": [
+            7.3365,
+            8.0594
+          ],
+          "claps": [
+            {
+              "t": 7.3365,
+              "decalage_ms": 563.1
+            },
+            {
+              "t": 8.0594,
+              "decalage_ms": 551.9
+            }
+          ],
+          "claps_audio_s": [
+            6.6337,
+            7.3365,
+            8.0594
+          ]
+        }
+      ],
+      "vignette_ok": false
+    },
+    "webcam_1080p30_15ips_00-53-54.mp4": {
+      "description": "Webcam, OBS 1080p 29.97, ~15 i/s réels, 3 claps de près (mains qui rebondissent)",
+      "fps": "29.97",
+      "fps_exact": 29.97002997002997,
+      "version": 2,
+      "duree_s": 4.337,
+      "cameras": [
+        {
+          "nom": "CAM 1",
+          "type": "camera",
+          "decalage_ms": 25.1,
+          "incertitude_ms": 46.8,
+          "cadence_reelle_ips": 15.1,
+          "ambigu": null,
+          "claps_s": [
+            1.3626,
+            2.7917
+          ],
+          "claps": [
+            {
+              "t": 1.3626,
+              "decalage_ms": 27.9
+            },
+            {
+              "t": 2.7917,
+              "decalage_ms": 22.3
+            }
+          ],
+          "claps_audio_s": [
+            1.3626,
+            1.9466,
+            2.7917
+          ]
+        }
+      ],
+      "vignette_ok": true
+    },
+    "webcam_1080p30_15ips_loin_00-54-00.mp4": {
+      "description": "Webcam, 1080p 29.97, ~15 i/s réels, claps loin de la caméra",
+      "fps": "29.97",
+      "fps_exact": 29.97002997002997,
+      "version": 2,
+      "duree_s": 8.975,
+      "cameras": [
+        {
+          "nom": "CAM 1",
+          "type": "camera",
+          "decalage_ms": 14.2,
+          "incertitude_ms": 47.2,
+          "cadence_reelle_ips": 15.0,
+          "ambigu": null,
+          "claps_s": [
+            4.7157,
+            5.5229
+          ],
+          "claps": [
+            {
+              "t": 4.7157,
+              "decalage_ms": 11.0
+            },
+            {
+              "t": 5.5229,
+              "decalage_ms": 17.4
+            }
+          ],
+          "claps_audio_s": [
+            3.9526,
+            4.7157,
+            5.5229
+          ]
+        }
+      ],
+      "vignette_ok": true
+    },
+    "webcam_4k60_15ips_00-47-11.mp4": {
+      "description": "Webcam, OBS 4K 59.94, ~15 i/s réels (faible lumière), 3 claps de près ; a révélé les fausses coupes",
+      "fps": "59.94",
+      "fps_exact": 59.94005994005994,
+      "version": 2,
+      "duree_s": 5.138,
+      "cameras": [
+        {
+          "nom": "CAM 1",
+          "type": "camera",
+          "decalage_ms": -14.9,
+          "incertitude_ms": 38.7,
+          "cadence_reelle_ips": 14.9,
+          "ambigu": null,
+          "claps_s": [
+            1.9268,
+            2.7212,
+            3.4881
+          ],
+          "claps": [
+            {
+              "t": 1.9268,
+              "decalage_ms": -25.1
+            },
+            {
+              "t": 2.7212,
+              "decalage_ms": -14.9
+            },
+            {
+              "t": 3.4881,
+              "decalage_ms": 1.3
+            }
+          ],
+          "claps_audio_s": [
+            1.9268,
+            2.7212,
+            3.4881
+          ]
+        }
+      ],
+      "vignette_ok": true
+    },
+    "webcam_4k60_15ips_00-49-08.mp4": {
+      "description": "Webcam, OBS 4K 59.94, ~15 i/s réels, 3 claps",
+      "fps": "59.94",
+      "fps_exact": 59.94005994005994,
+      "version": 2,
+      "duree_s": 10.844,
+      "cameras": [
+        {
+          "nom": "CAM 1",
+          "type": "camera",
+          "decalage_ms": 28.0,
+          "incertitude_ms": 38.5,
+          "cadence_reelle_ips": 15.0,
+          "ambigu": null,
+          "claps_s": [
+            5.2857,
+            5.9195,
+            6.5679
+          ],
+          "claps": [
+            {
+              "t": 5.2857,
+              "decalage_ms": 13.7
+            },
+            {
+              "t": 5.9195,
+              "decalage_ms": 30.3
+            },
+            {
+              "t": 6.5679,
+              "decalage_ms": 28.0
+            }
+          ],
+          "claps_audio_s": [
+            5.2857,
+            5.9195,
+            6.5679
+          ]
+        }
+      ],
+      "vignette_ok": true
+    }
+  }
+}

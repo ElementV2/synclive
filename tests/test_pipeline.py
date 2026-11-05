@@ -223,3 +223,46 @@ def test_clap_right_after_a_slower_gesture_is_not_swallowed():
     sig = SimpleNamespace(t=t, energy=lambda *a, **k: (e, 0, e.size - 1))
     offs = [round((1.4 - v.t) * 1000) for v in visual.clap_candidates(sig, 1.4, 0.6)]
     assert any(-300 <= o <= -240 for o in offs), offs
+
+
+def test_isolated_tonal_noise_is_not_a_beep_train():
+    """Bruit de plateau tonal (voix, choc) près d'une mire sans son : pas de bips. Un vrai train :
+    deux bips SyncLive, ou deux sons de même hauteur (mire d'une autre marque)."""
+    from types import SimpleNamespace as N
+    from synclive.analysis import _beep_train
+    ev = lambda t, f: (N(t=t, freq=f), [])
+    assert _beep_train([ev(9.3, 882.0), ev(18.6, 1228.0)]) == []          # 1228 Hz ≈ note SyncLive n°0
+    assert len(_beep_train([ev(1.0, 1000.0), ev(2.0, 1004.0), ev(2.5, 640.0)])) == 2
+    assert len(_beep_train([ev(1.0, 1200.0), ev(2.0, 1500.0)])) == 2       # notes SyncLive n°0, n°1
+
+
+def test_spurious_audio_event_does_not_make_offset_ambiguous():
+    """Faux clap audio en début de fichier (0,18 s / 0,45 s) à côté d'un vrai clap net : le décalage
+    du vrai clap reste mesuré ; des claps réguliers trop rapprochés pour ce décalage, eux, l'invalident."""
+    from types import SimpleNamespace as N
+    from synclive.analysis import _ambiguity
+    cand = lambda t, s: N(t=t, strength=s)
+    clap = lambda ta, cands, sel=None: N(t_audio=ta, candidates=cands, excluded=False,
+                                         selected=sel if sel is not None else (cands[0] if cands else None))
+    spur = [clap(0.182, [cand(0.323, 0.12)], sel=False), clap(0.451, [cand(0.796, 0.16)], sel=False)]
+    for c in spur:
+        c.selected = None
+    real = clap(5.438, [cand(5.554, 1.0), cand(5.158, 0.31)])
+    assert _ambiguity(spur + [real], -0.116, 1 / 29.97) is None
+    regular = [clap(t, [cand(t - 0.557, 1.0)]) for t in (6.63, 7.34, 8.06)]
+    assert _ambiguity(regular, 0.557, 1 / 29.97) is not None
+
+
+@pytest.mark.parametrize("fps", ["30000/1001", "60"])
+def test_image_very_late_still_measured(tmp_path, fps):
+    """Image très en retard (300-350 ms) : l'arrêt des mains tombe en bout de fenêtre de recherche ;
+    la retombée du geste doit être regardée au-delà, sinon le clap est rejeté (bug corrigé)."""
+    offs = {"A": -0.350, "B": -0.300}
+    vid = tmp_path / "late.mkv"
+    make(str(vid), Fraction(fps), offs, ["A", "B"])
+    an = analysis.run(str(vid), analysis.Settings(use_hands=False))
+    cams = an.cameras()
+    assert len(cams) == 2
+    for cam, exp in zip(cams, [offs["A"], offs["B"]]):
+        assert cam.offset is not None, cam.name
+        assert abs(cam.offset - exp) < max(0.5 / float(Fraction(fps)), 0.015), (cam.name, cam.offset)

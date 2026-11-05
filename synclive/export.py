@@ -69,16 +69,30 @@ class CorrectionPlan:
         return next((f for f in self.fixes if f.cam.id == cam_id), None)
 
 
+def within_uncertainty(cam: CameraResult) -> bool:
+    """Écart mesuré plus petit que la marge de mesure : rien de significatif à corriger."""
+    unc = getattr(cam, "uncertainty", None)
+    return cam.offset is not None and unc is not None and abs(cam.offset) <= unc
+
+
+def effective_offset(cam: CameraResult) -> float | None:
+    """Décalage retenu pour la correction : on ne corrige pas plus finement que la mesure."""
+    if cam.offset is None:
+        return None
+    return 0.0 if within_uncertainty(cam) else cam.offset
+
+
 def correction_plan(cams: list[CameraResult], fps: float) -> CorrectionPlan:
-    measured = [c for c in cams if c.offset is not None]
+    offs = {c.id: effective_offset(c) for c in cams}
+    measured = [o for o in offs.values() if o is not None]
     # son en avance (décalage < 0) sur au moins une source -> on retarde le son de la pire avance
-    d = max([0.0] + [-c.offset for c in measured])
+    d = max([0.0] + [-o for o in measured])
     fixes = []
     for c in cams:
-        if c.offset is None:
+        if offs[c.id] is None:
             fixes.append(SourceFix(c, None, None, None))
             continue
-        v = max(0.0, c.offset + d)              # après retard du son, le son n'est plus jamais en avance
+        v = max(0.0, offs[c.id] + d)            # après retard du son, le son n'est plus jamais en avance
         n = int(round(v * fps))
         fixes.append(SourceFix(c, v, n, v - n / fps))
     return CorrectionPlan(audio_delay=d, fps=fps, fixes=fixes)
@@ -102,16 +116,34 @@ def both(sec: float | None, fps: float, signed: bool = False) -> str:
 
 def status(cam: CameraResult, fps: float) -> tuple[str, str]:
     """(constat en majuscules, explication) : qui est en retard, l'image ou le son."""
+    if getattr(cam, "ambiguous", None):
+        return "AMBIGU", cam.ambiguous
     if cam.offset is None:
         return "NON MESURÉE", ("aucun bip associé à un flash : le son de cette machine n'a pas été enregistré ?"
                                if cam.kind == "mire" else "aucun clap à la fois visible et audible")
+    margin = precision(cam)
     if round(cam.offset * 1000) == 0:
-        return "SYNCHRO", "le son et l'image arrivent en même temps"
+        return "SYNCHRO", "le son et l'image arrivent en même temps" + margin
+    if within_uncertainty(cam):
+        return ("SYNCHRO", f"écart mesuré {cam.offset * 1000:+.0f} ms, plus petit que la marge de mesure"
+                + margin)
     if cam.offset < 0:
         return (f"IMAGE EN RETARD de {both(cam.offset, fps)}",
-                "le son arrive avant l'image")
+                "le son arrive avant l'image" + margin)
     return (f"SON EN RETARD de {both(cam.offset, fps)}",
-            "le son arrive après l'image")
+            "le son arrive après l'image" + margin)
+
+
+def precision(cam: CameraResult) -> str:
+    """« · ± 39 ms (caméra à 15 i/s réels) » : marge de mesure et cause quand la caméra est lente."""
+    unc = getattr(cam, "uncertainty", None)
+    if unc is None:
+        return ""
+    txt = f" · ± {unc * 1000:.0f} ms"
+    sfps = getattr(cam, "source_fps", None)
+    if sfps:
+        txt += f" (caméra à {sfps:.0f} i/s réels)"
+    return txt
 
 
 def fmt_audio_delay(plan: CorrectionPlan) -> str:
@@ -322,6 +354,9 @@ def export_all(an: Analysis, out_dir: str | Path) -> list[Path]:
                 "decalage_ms": None if c.offset is None else round(c.offset * 1000, 1),
                 "decalage_images": None if c.offset is None else round(c.offset * fps, 2),
                 "dispersion_ms": None if c.spread is None else round(c.spread * 1000, 1),
+                "incertitude_ms": None if c.uncertainty is None else round(c.uncertainty * 1000, 1),
+                "cadence_reelle_ips": None if c.source_fps is None else round(c.source_fps, 2),
+                "ambigu": c.ambiguous,
                 "claps_retenus": c.n_used,
                 "claps_total": c.n_total,
                 "confiance": c.confidence,

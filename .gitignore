@@ -9,3 +9,7 @@ build.log
 *.spec
 
 release/
+
+# banque de vidéos de test (lourdes, locales)
+videos_test/sources/
+videos_test/compos/

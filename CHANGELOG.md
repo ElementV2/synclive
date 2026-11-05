@@ -4,6 +4,32 @@ Toutes les évolutions notables de SyncLive sont listées ici.
 Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), numérotation [SemVer](https://semver.org/lang/fr/) :
 `MAJEUR.MINEUR.CORRECTIF` (correctif = corrections, mineur = nouveautés compatibles, majeur = changements incompatibles).
 
+## [1.2.0] - 2026-11-05
+
+### Ajouté
+- **Marge de mesure** affichée pour chaque source (« ± 39 ms »), avec la **cadence réelle** de la
+  caméra quand elle répète ses images (webcam qui tombe à 15 i/s en faible lumière). Un écart plus
+  petit que la marge donne « SYNCHRO » et aucune correction n'est proposée.
+- **Décalage ambigu** signalé (« AMBIGU : +557 ms ou −165 ms ») quand des claps trop rapprochés
+  permettent deux appariements, au lieu d'annoncer un résultat faux.
+- **Mosaïques sur fond uni** (noir, blanc, couleur) : vignettes de tailles et positions libres,
+  mal alignées, qui se touchent par un coin, ou collées en bande au milieu du fond.
+- **Analyse fine des vignettes** : autour de chaque clap, le mouvement de chaque vignette est
+  réanalysé à pleine résolution (une vignette de 640 px ne couvrait que 10 × 6 cellules).
+- **Banque de vidéos de test** (`videos_test/`, `tools/videos_test.py`) : clips réels et mosaïques
+  multicam synthétiques (claps simultanés, un seul son, retards connus de −300 à +300 ms).
+
+### Corrigé
+- Une caméra qui répète ses images (15 i/s réels dans un fichier à 30 ou 60) était découpée en
+  plusieurs fausses caméras à chaque clap fait près de l'objectif.
+- Image très en retard (au-delà de ~200 ms) : le clap était rejeté car l'arrêt des mains tombait
+  en bout de fenêtre de recherche.
+- Mire à l'écran dont le son n'a pas été enregistré : un bruit du plateau pouvait être pris pour un
+  bip et donner une mesure fausse ; la mire est maintenant « non mesurée ».
+- Un faux clap audio (son coupé en plein bruit en début de fichier) pouvait fausser ou invalider
+  la mesure d'une caméra.
+- Une mire SyncLive sur fond uni n'est pas prise pour une mosaïque.
+
 ## [1.1.1] - 2026-11-04
 
 ### Corrigé
@@ -50,6 +76,7 @@ Première version (remplacée par la 1.1.0, qui apporte la mise à jour automati
 - Export : images annotées, récapitulatif, CSV, JSON.
 - Exécutable Windows autonome (licence GPL-3.0, composants tiers documentés).
 
+[1.2.0]: https://github.com/ElementV2/synclive/releases/tag/v1.2.0
 [1.1.1]: https://github.com/ElementV2/synclive/releases/tag/v1.1.1
 [1.1.0]: https://github.com/ElementV2/synclive/releases/tag/v1.1.0
 [1.0.0]: https://github.com/ElementV2/synclive/tree/b64643b

@@ -23,6 +23,7 @@ class Shot:
     qr: str | None = None       # identifiant de mire SyncLive lu dans le QR (« 07 · ATLAS »)
     region: tuple[float, float, float, float] = (0.0, 0.0, 1.0, 1.0)   # vignette (x0, y0, x1, y1)
     tile: str | None = None     # libellé de la vignette (« vignette haut gauche »), None = plein écran
+    mire: bool = False          # affiche une mire (flashs réguliers), même sans bips enregistrés
 
     @property
     def duration(self) -> float:
@@ -50,6 +51,34 @@ def _is_flash(scan: MotionScan, k: int, thr: float) -> bool:
     return False
 
 
+DUP_DIFF = 8e-4   # écart de vignette d'une image répétée (≤ 3e-4 mesuré) ; une vraie image fixe : ≥ 1e-3
+
+
+def _motion_base(d: np.ndarray, k: int, count: int = 5, reach: int = 40) -> float:
+    """Écart « normal » autour de l'image k : médiane des `count` images voisines de chaque côté
+    qui changent vraiment. Les images répétées (écart ~0) sont ignorées : sinon, dans une vidéo
+    dont la source tourne à 15 i/s, la base vaut 0 et le moindre geste rapide passe pour une coupe."""
+    n = d.size
+    before = [d[j] for j in range(k - 1, max(0, k - reach), -1) if d[j] > DUP_DIFF][:count]
+    after = [d[j] for j in range(k + 1, min(n, k + reach)) if d[j] > DUP_DIFF][:count]
+    neigh = before + after
+    return float(np.median(neigh)) if neigh else 0.0
+
+
+SCENE_CHANGE = 0.04   # écart de décor minimal d'une vraie coupe (claps devant la webcam : ~0,02)
+
+
+def _scene_change(scan: MotionScan, k: int, window: float = 0.25) -> float:
+    """Écart de décor entre avant et après l'image k : médiane temporelle de chaque côté (efface ce
+    qui bouge, les mains), puis médiane spatiale de l'écart (ignore ce qui reste d'un geste)."""
+    n = scan.times.size
+    period = float(np.median(np.diff(scan.times))) if n > 1 else 1 / 30
+    w = max(4, int(round(window / max(period, 1e-3))))
+    a = np.median(scan.thumbs[max(0, k - w):k], axis=0)
+    b = np.median(scan.thumbs[k:min(n, k + w)], axis=0)
+    return float(np.median(np.abs(a - b))) / 255.0
+
+
 def detect_shots(scan: MotionScan, cut_threshold: float = 0.05,
                  min_shot: float = 0.4) -> list[Shot]:
     n = scan.times.size
@@ -58,13 +87,13 @@ def detect_shots(scan: MotionScan, cut_threshold: float = 0.05,
     for k in range(1, n):
         if d[k] < cut_threshold or scan.frac_moving[k] < 0.5:
             continue
-        lo, hi = max(1, k - 5), min(n, k + 6)
-        neigh = np.concatenate([d[lo:k], d[k + 1:hi]])
-        base = float(np.median(neigh)) if neigh.size else 0.0
+        base = _motion_base(d, k)
         if d[k] < 2.5 * base + 1e-3:
             continue
         if _is_flash(scan, k, cut_threshold):
             continue
+        if _scene_change(scan, k) < SCENE_CHANGE:
+            continue   # le décor ne change pas : geste rapide (clap tout près de l'objectif), pas une coupe
         if scan.times[k] - scan.times[cuts[-1]] < min_shot:
             # deux coupes trop proches : garder la plus forte
             if cuts[-1] != 0 and d[k] > d[cuts[-1]]:

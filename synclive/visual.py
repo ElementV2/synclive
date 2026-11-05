@@ -23,6 +23,7 @@ from .shots import Shot
 
 MIN_PEAK = 2.0        # énergie minimale (niveaux de gris moyens / 255) d'un vrai événement
 MAX_CELLS = 32          # grille 32x18 : 4 fois plus de cellules qu en 16x9
+LOOKAHEAD = 0.3      # s regardés après la fenêtre pour juger qu'un geste s'arrête net
 DROP = 0.55           # seuil de retombée du mouvement (fraction du pic) = fin du clap
 
 
@@ -51,14 +52,17 @@ def roi_from_boxes(boxes: list[tuple[float, float, float, float]]) -> np.ndarray
 class ShotSignal:
     """Accès au mouvement par cellule d'un plan, avec ligne de base par cellule."""
 
-    def __init__(self, scan: MotionScan, shot: Shot):
+    def __init__(self, scan: MotionScan, shot: Shot, base_pct: float = 50.0):
+        """`base_pct` : centile du mouvement par cellule pris comme « calme ». La médiane convient
+        sur un plan entier ; sur une fenêtre courte autour d'un clap, les mains bougent une bonne
+        partie du temps et la médiane les ferait paraître calmes : on prend un centile bas."""
         self.scan = scan
         self.shot = shot
         self.t = scan.times[shot.i0:shot.i1]
         self.cells = scan.cells[shot.i0:shot.i1].reshape(len(self.t), -1).astype(np.float32)
         if len(self.t) > 1:
             self.cells[0] = 0.0  # différence à travers la coupe
-            self.base = np.median(self.cells[1:], axis=0)
+            self.base = np.percentile(self.cells[1:], base_pct, axis=0).astype(np.float32)
         else:
             self.base = np.zeros(self.cells.shape[1], np.float32)
         # cellules dont le centre est dans la vignette (multiview) ; tout l'écran sinon
@@ -95,7 +99,6 @@ class ShotSignal:
         sel = [i for i in order[:MAX_CELLS] if score[i] >= 0.5 * best]
         e = np.maximum(seg[:, sel], 0.0).mean(axis=1).astype(np.float64)
         return e, lo, hi
-
 
 def _flash_hue(thumbs: np.ndarray, k: int, region: np.ndarray) -> float | None:
     if region.sum() < 2:
@@ -159,11 +162,15 @@ def find_candidates(sig: ShotSignal, t_audio: float, window: float,
 
 def clap_candidates(sig: ShotSignal, t_audio: float, window: float,
                     mask: np.ndarray | None = None) -> list[VisualCandidate]:
-    e, lo, hi = sig.energy(t_audio, window, mask)
+    # on regarde LOOKAHEAD au-delà de la fenêtre : un clap vu tard (image très en retard) doit
+    # pouvoir montrer son arrêt, même si la retombée du mouvement tombe après la fenêtre
+    e, lo, hi = sig.energy(t_audio, window + LOOKAHEAD, mask)
     if e.size < 3:
         return []
     t = sig.t
-    wmax = float(e.max())
+    tt = t[lo:hi + 1]
+    core = np.abs(tt - t_audio) <= window
+    wmax = float(e[core].max()) if core.any() else float(e.max())
     if wmax < MIN_PEAK:
         return []        # rien de visible : clap hors champ, mire sans flash…
     out: list[VisualCandidate] = []

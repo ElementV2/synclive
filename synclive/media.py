@@ -20,6 +20,9 @@ ProgressCb = Callable[[float], None]
 MOTION_W, MOTION_H = 320, 180
 GRID_COLS, GRID_ROWS = 32, 18   # cellules de 10x10 px, assez fines pour les vignettes de multiview
 THUMB_W, THUMB_H = 48, 27
+# échantillons pour la détection des vignettes : 384 = 2·3·4·16, les jointures d'une mosaïque
+# à 1/2, 1/3, 1/4, 2/3, 3/4 tombent sur un pixel entier (à 320, 2/3 = 213,3 : saut étalé)
+SAMPLE_W, SAMPLE_H = 384, 216
 
 
 @dataclass
@@ -52,7 +55,7 @@ class MotionScan:
     frac_moving: np.ndarray # (n,) fraction de cellules en mouvement
     thumb_diff: np.ndarray  # (n,) différence moyenne de vignette avec l'image précédente
     sample_idx: np.ndarray | None = None   # (m,) indices des images échantillonnées
-    samples: np.ndarray | None = None      # (m, 180, 320) niveaux de gris (détection des vignettes)
+    samples: np.ndarray | None = None      # (m, 216, 384) niveaux de gris (détection des vignettes)
 
 
 def probe(path: str) -> VideoInfo:
@@ -121,6 +124,60 @@ def decode_audio(path: str, stream_index: int = 0, progress: ProgressCb | None =
         return sig, rate, float(t0 or 0.0)
 
 
+def scan_regions(path: str, t0: float, t1: float,
+                 regions: list[tuple[float, float, float, float]],
+                 max_width: int = 1920) -> list[MotionScan]:
+    """Mouvement par cellule sur [t0, t1] pour chaque vignette, recadrée puis analysée comme une
+    image entière (grille 32x18 sur la vignette seule). Dans une mosaïque, une vignette de 640 px
+    ne couvre que ~10x6 cellules de l'analyse globale : trop grossier pour voir des mains."""
+    acc = [dict(times=[], cells=[], thumbs=[], fracs=[], tdiffs=[], prev=None, prevt=None)
+           for _ in regions]
+    with av.open(path) as c:
+        vs = c.streams.video[0]
+        vs.thread_type = "AUTO"
+        c.seek(max(0, int(max(0.0, t0 - 0.5) / vs.time_base)), stream=vs, backward=True, any_frame=False)
+        for frame in c.decode(vs):
+            t = frame.time
+            if t is None or t < t0:
+                continue
+            if t > t1:
+                break
+            w, h = frame.width, frame.height
+            if w > max_width:
+                h, w = int(round(h * max_width / w / 2) * 2), max_width
+            rgb = frame.to_ndarray(format="rgb24", width=w, height=h)
+            for (x0, y0, x1, y1), a in zip(regions, acc):
+                crop = rgb[int(y0 * h):max(int(y0 * h) + 2, int(round(y1 * h))),
+                           int(x0 * w):max(int(x0 * w) + 2, int(round(x1 * w)))]
+                img = cv2.resize(crop, (MOTION_W, MOTION_H), interpolation=cv2.INTER_AREA)
+                gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY).astype(np.int16)
+                thumb = cv2.resize(img, (THUMB_W, THUMB_H), interpolation=cv2.INTER_AREA)
+                if a["prev"] is None:
+                    cell = np.zeros((GRID_ROWS, GRID_COLS), np.float32)
+                    tdiff = 0.0
+                else:
+                    d = np.abs(gray - a["prev"]).astype(np.float32)
+                    cell = d.reshape(GRID_ROWS, MOTION_H // GRID_ROWS,
+                                     GRID_COLS, MOTION_W // GRID_COLS).mean(axis=(1, 3))
+                    tdiff = float(np.abs(thumb.astype(np.int16) - a["prevt"]).mean() / 255.0)
+                a["times"].append(float(t))
+                a["cells"].append(cell)
+                a["thumbs"].append(thumb)
+                a["fracs"].append(float((cell > 6.0).mean()))
+                a["tdiffs"].append(tdiff)
+                a["prev"], a["prevt"] = gray, thumb.astype(np.int16)
+    out = []
+    for a in acc:
+        if not a["times"]:
+            out.append(None)
+            continue
+        out.append(MotionScan(times=np.asarray(a["times"], np.float64), cells=np.stack(a["cells"]),
+                              thumbs=np.stack(a["thumbs"]),
+                              frac_moving=np.asarray(a["fracs"], np.float32),
+                              thumb_diff=np.asarray(a["tdiffs"], np.float32)))
+    return out
+
+
 def scan_video(path: str, info: VideoInfo, progress: ProgressCb | None = None,
                cancel: Callable[[], bool] | None = None) -> MotionScan:
     """Un seul passage sur toute la vidéo : temps exacts, mouvement par cellule, vignettes."""
@@ -164,7 +221,7 @@ def scan_video(path: str, info: VideoInfo, progress: ProgressCb | None = None,
             prev_gray = gray
             prev_thumb = thumb.astype(np.int16)
             if idx % every == 0:
-                samples.append(gray.astype(np.uint8))
+                samples.append(frame.to_ndarray(format="gray", width=SAMPLE_W, height=SAMPLE_H))
                 sample_idx.append(idx)
             idx += 1
             if progress and info.duration > 0 and idx % 15 == 0:

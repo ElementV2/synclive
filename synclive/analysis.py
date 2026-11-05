@@ -66,6 +66,9 @@ class CameraResult:
     tile: str | None = None          # vignette du multiview (« vignette haut gauche »)
     same_look_as: list[str] = field(default_factory=list)
     image: np.ndarray | None = None
+    uncertainty: float | None = None  # s, marge probable (≈ 95 %) sur le décalage
+    source_fps: float | None = None   # cadence réelle si la caméra est plus lente que le fichier
+    ambiguous: str | None = None      # décalage ambigu (claps trop rapprochés) : explication
 
 
 @dataclass
@@ -78,6 +81,7 @@ class Analysis:
     look: dict[int, int] = field(default_factory=dict)      # plan -> groupe d'apparence
     shot_images: dict[int, np.ndarray] = field(default_factory=dict)
     hands_status: str = ""
+    source_period: dict[int, float] = field(default_factory=dict)   # plan -> durée d'une image réelle
 
     @property
     def period(self) -> float:
@@ -204,6 +208,14 @@ def aggregate_camera(an: Analysis, cid: int) -> CameraResult:
     shot_ids = [s.index for s in an.shots if s.camera == cid]
     claps = [c for c in an.claps if c.shot in shot_ids]
     _select(claps, an.period)
+    # un candidat très faible à côté de vrais claps nets (faux clap audio : bruit en début de
+    # fichier, choc) ne doit pas tirer la médiane ; on ne l'écarte pas s'il est seul
+    sel = [c for c in claps if c.selected is not None]
+    if len(sel) >= 2:
+        top = max(c.selected.strength for c in sel)
+        for c in sel:
+            if c.forced is None and c.selected.strength < 0.25 * top:
+                c.selected = None
     used = [c for c in claps if c.selected is not None]
     offs = np.array([c.offset for c in used], dtype=np.float64)
     if offs.size:
@@ -214,11 +226,24 @@ def aggregate_camera(an: Analysis, cid: int) -> CameraResult:
         off, spread = None, None
     p = an.period
     n = len(used)
+    name = an.camera_names.get(cid, f"CAM {cid + 1}")
+    kind = "mire" if name.startswith("MIRE") or (
+        claps and sum(c.method.startswith("mire") for c in claps) > len(claps) / 2) else "camera"
+    # cadence réelle : une webcam qui manque de lumière répète ses images (15 i/s dans un fichier
+    # à 30) ; l'instant d'un clap n'est alors connu qu'à une image réelle près. Un flash de mire,
+    # lui, tombe pile sur une image : pas de plancher.
+    periods = [an.source_period[i] for i in shot_ids if i in an.source_period]
+    t_src = max(p, float(np.median(periods))) if periods else p
+    unc = sigma = None
+    if n:
+        floor = 0.5 * t_src / np.sqrt(n) if kind == "camera" else 0.001
+        sigma = max(spread or 0.0, floor)
+        unc = 2.0 * sigma
     if n == 0:
         conf = "aucune"
-    elif n >= 3 and spread is not None and spread <= 0.35 * p:
+    elif n >= 3 and sigma <= 0.35 * p:
         conf = "élevée"
-    elif n >= 2 and spread is not None and spread <= 0.7 * p:
+    elif n >= 2 and sigma <= 0.7 * p:
         conf = "moyenne"
     else:
         conf = "faible"
@@ -227,18 +252,95 @@ def aggregate_camera(an: Analysis, cid: int) -> CameraResult:
         best_shot = max(shot_ids, key=lambda i: (sum(1 for c in used if c.shot == i),
                                                  an.shots[i].duration))
         img = an.shot_images.get(best_shot)
-    name = an.camera_names.get(cid, f"CAM {cid + 1}")
-    kind = "mire" if name.startswith("MIRE") or (
-        claps and sum(c.method.startswith("mire") for c in claps) > len(claps) / 2) else "camera"
     qrs = [an.shots[i].qr for i in shot_ids if an.shots[i].qr]
     label = max(set(qrs), key=qrs.count) if qrs else None
     tiles = {an.shots[i].tile for i in shot_ids}
     tile = tiles.pop() if len(tiles) == 1 else None
+    # un choix manuel (candidat forcé dans l'interface) n'est jamais annulé par les garde-fous
+    manual = any(c.forced is not None and c.selected is not None for c in claps)
+    ambiguous = _ambiguity(claps, off, p) if kind == "camera" and not manual else None
+    if kind == "mire" and n < 2 and not manual:
+        # un seul bip sur un flash ne prouve rien : un flash revient chaque seconde
+        off, spread, unc, conf, n = None, None, None, "aucune", 0
+    if ambiguous:
+        off, conf = None, "aucune"
     return CameraResult(
         id=cid, name=name, shots=shot_ids, claps=claps, source_label=label, tile=tile,
         offset=off, spread=spread, n_used=n, n_total=len([c for c in claps if not c.excluded]),
-        confidence=conf, kind=kind, image=img,
+        confidence=conf, kind=kind, image=img, uncertainty=unc,
+        source_fps=1.0 / t_src if t_src > 1.25 * p else None, ambiguous=ambiguous,
     )
+
+
+def _support(claps: list[Clap], o: float, sigma: float) -> float:
+    """Soutien d'un décalage par les candidats visuels : somme, clap par clap, du meilleur
+    candidat proche de ce décalage (pondéré par sa force)."""
+    tot = 0.0
+    for c in claps:
+        best = 0.0
+        for v in c.candidates:
+            d = (c.t_audio - v.t - o) / sigma
+            best = max(best, max(v.strength, 0.05) * float(np.exp(-d * d)))
+        tot += best
+    return tot
+
+
+def _ambiguity(claps: list[Clap], off: float | None, period: float) -> str | None:
+    """Claps réguliers : l'image du clap n°2 peut s'apparier au son du n°3, ce qui donne un
+    décalage faux d'un espacement de claps. Le résultat n'est ambigu que si ce décalage voisin
+    (décalage ± espacement) est lui aussi soutenu par ce qu'on voit à l'image ; un faux clap audio
+    isolé (bruit en début de fichier) ne suffit pas."""
+    if off is None:
+        return None
+    # seuls comptent les claps visibles dans cette source (une mosaïque partage la bande son :
+    # les claps des autres caméras y sont aussi, mais celle-ci ne les voit pas)
+    vis = sorted((c for c in claps if not c.excluded and c.candidates), key=lambda c: c.t_audio)
+    if len(vis) < 2:
+        return None
+    sigma = max(0.5 * period, 0.015)
+    here = _support(vis, off, sigma)
+    worst = None
+    for g in sorted({round(float(b.t_audio - a.t_audio), 3) for a, b in zip(vis, vis[1:])}):
+        for alt in (off - g, off + g):
+            if abs(alt) > 0.6:
+                continue
+            sup = _support(vis, alt, sigma)
+            if sup >= 0.7 * here and (worst is None or sup > worst[0]):
+                worst = (sup, alt, g)
+    if worst is None:
+        # claps retenus réguliers et décalage proche de la moitié de leur espacement : la moindre
+        # erreur d'appariement donnerait un résultat faux d'un espacement entier
+        ts = sorted(c.t_audio for c in vis if c.selected is not None)
+        gaps = np.diff(ts)
+        if gaps.size == 0 or abs(off) < 0.45 * float(gaps.min()):
+            return None
+        gap = float(gaps.min())
+        alt = off - gap if off > 0 else off + gap
+    else:
+        _, alt, gap = worst
+    return (f"ambigu : {off * 1000:+.0f} ms ou {alt * 1000:+.0f} ms, claps espacés de "
+            f"{gap:.2f} s".replace(".", ",") + " (espacer les claps d'au moins 1 s)")
+
+
+def _source_period(scan: media.MotionScan, shot: shots_mod.Shot, period: float) -> float:
+    """Durée d'une image réellement capturée dans ce plan (vignette seulement en multiview) :
+    les images répétées par une caméra trop lente ont un écart ~0 avec la précédente."""
+    th = scan.thumbs[shot.i0:shot.i1]
+    if th.shape[0] < 8:
+        return period
+    hh, ww = th.shape[1:3]
+    x0, y0, x1, y1 = shot.region
+    th = th[:, int(y0 * hh):max(int(y0 * hh) + 1, int(round(y1 * hh))),
+            int(x0 * ww):max(int(x0 * ww) + 1, int(round(x1 * ww)))].astype(np.int16)
+    d = np.abs(np.diff(th, axis=0)).mean(axis=(1, 2, 3)) / 255.0
+    real = np.flatnonzero(d >= shots_mod.DUP_DIFF)
+    if real.size < 4:
+        return period
+    gaps = np.diff(real)
+    gaps = gaps[gaps <= 8]           # une longue pause (image figée) n'est pas une cadence
+    if gaps.size < 3:
+        return period
+    return float(np.mean(gaps)) * period
 
 
 # ---------------------------------------------------------------------------
@@ -300,7 +402,7 @@ def _split_shots_by_offset(shots: list[shots_mod.Shot], claps: list[Clap], scan:
                                 start=float(times[i0]) if j else s.start,
                                 end=float(times[i1]) if i1 < times.size and j < len(bounds) - 2 else s.end,
                                 camera=s.camera)
-            ns.look, ns.qr, ns.region, ns.tile = s.look, s.qr, s.region, s.tile
+            ns.look, ns.qr, ns.region, ns.tile, ns.mire = s.look, s.qr, s.region, s.tile, s.mire
             new_shots.append(ns)
             group = spans[j][3] if spans else []
             seg_off[ns.index] = spans[j][2] if spans else None
@@ -431,7 +533,8 @@ def _split_shots_by_qr(path: str, shots: list[shots_mod.Shot], claps: list[Clap]
             ns = shots_mod.Shot(index=len(out), i0=i0, i1=i1,
                                 start=s.start if j == 0 else float(times[i0]),
                                 end=s.end if j == len(merged) - 1 else float(times[i1]),
-                                camera=s.camera, look=s.look, qr=r[0], region=s.region, tile=s.tile)
+                                camera=s.camera, look=s.look, qr=r[0], region=s.region, tile=s.tile,
+                                mire=s.mire)
             out.append(ns)
         segs = list(zip(range(len(merged)), bounds[:-1], bounds[1:]))
         first_new = len(out) - len(merged)
@@ -535,6 +638,90 @@ def _boxes_in_region(locator, img: np.ndarray, region) -> list:
     return out
 
 
+LOCAL_BASE_PCT = 20.0  # centile « calme » de l'analyse fine (fenêtre courte autour du clap)
+TILE_AREA = 0.6     # sous cette part de l'image, une vignette est réanalysée finement autour des claps
+
+
+def _tile_clap_candidates(path: str, shots: list[shots_mod.Shot], claps_by_shot: dict,
+                          hand_boxes: dict, window: float, cancel=None) -> dict:
+    """Candidats de clap des vignettes de mosaïque, cherchés sur une analyse du mouvement propre à
+    chaque vignette (grille complète sur la vignette seule), autour de chaque clap audio. Un seul
+    décodage par clap sert à toutes les vignettes (elles partagent la bande son)."""
+    tiles = [s for s in shots
+             if (s.region[2] - s.region[0]) * (s.region[3] - s.region[1]) < TILE_AREA]
+    by_time: dict[float, list[shots_mod.Shot]] = {}
+    for s in tiles:
+        for ac in claps_by_shot.get(s.index, []):
+            if ac.freq is None:
+                by_time.setdefault(ac.t, []).append(s)
+    half = window + visual.LOOKAHEAD + 0.25
+    out: dict = {}
+    for t, ss in sorted(by_time.items()):
+        if cancel and cancel():
+            raise InterruptedError
+        scans = media.scan_regions(path, t - half, t + half, [s.region for s in ss])
+        for s, ls in zip(ss, scans):
+            if ls is None or ls.times.size < 4:
+                continue
+            per = float(np.median(np.diff(ls.times)))
+            lshot = shots_mod.Shot(index=0, i0=0, i1=ls.times.size, start=float(ls.times[0]),
+                                   end=float(ls.times[-1]) + per)
+            x0, y0, x1, y1 = s.region
+            rel = [((bx0 - x0) / (x1 - x0), (by0 - y0) / (y1 - y0), (bx1 - x0) / (x1 - x0), (by1 - y0) / (y1 - y0))
+                   for bx0, by0, bx1, by1 in hand_boxes.get(s.index, [])]
+            mask = visual.roi_from_boxes(rel)
+            out[(s.index, t)] = visual.clap_candidates(visual.ShotSignal(ls, lshot, base_pct=LOCAL_BASE_PCT), t,
+                                                       window, mask)
+    return out
+
+
+def _claps_agree(hand_claps: list, period: float) -> bool:
+    """Les claps du plan donnent-ils un décalage cohérent (au moins 2, et au moins la moitié des
+    claps qui ont un candidat) ? Une caméra qui filme une LED clignotante reste une caméra."""
+    tmp = [Clap(id=i, shot=0, t_audio=ac.t, snr_db=0.0, method="clap",
+                candidates=[v for v in c if v.kind == "clap"]) for i, (ac, c) in enumerate(hand_claps)]
+    tmp = [c for c in tmp if c.candidates]
+    if len(tmp) < 2:
+        return False
+    cl = _clusters(tmp, period)
+    best = max((len(g) for _, g in cl), default=0)
+    return best >= 2 and best >= 0.5 * len(tmp)
+
+
+def _periodic_flashes(sig: visual.ShotSignal, shot: shots_mod.Shot) -> bool:
+    """Le plan montre-t-il une mire : au moins 4 flashs à intervalle régulier (0,4 à 2,1 s) ?"""
+    if shot.end - shot.start < 2.5:
+        return False
+    half = (shot.end - shot.start) / 2
+    fl = sorted(v.t for v in visual.flash_candidates(sig, shot.start + half, half + 0.1))
+    if len(fl) < 4:
+        return False
+    d = np.diff(fl)
+    per = float(np.median(d))
+    if not 0.4 <= per <= 2.1:
+        return False
+    return float(np.mean(np.abs(d - per) <= 0.1 * per)) >= 0.7
+
+
+def _beep_train(tonal: list) -> list:
+    """Bips d'une mire parmi les sons tonals d'un plan. Un vrai train de bips se répète : au moins
+    deux bips SyncLive (notes numérotées), ou au moins deux sons de même hauteur (± 3 %) pour une
+    mire d'une autre marque. Un son tonal isolé (voix, choc, bruit de plateau) n'en est pas un :
+    près d'une mire qui flashe chaque seconde, il tomberait toujours près d'un flash."""
+    from .pattern import tone_index
+    syn = [x for x in tonal if tone_index(x[0].freq) is not None]
+    other = [x for x in tonal if tone_index(x[0].freq) is None]
+    keep = syn if len(syn) >= 2 else []
+    best: list = []
+    for a, _ in other:
+        grp = [x for x in other if abs(x[0].freq / a.freq - 1.0) <= 0.03]
+        if len(grp) > len(best):
+            best = grp
+    if len(best) >= 2:
+        keep = keep + best
+    return sorted(keep, key=lambda x: x[0].t)
+
+
 def _split_multiview(shots: list[shots_mod.Shot], scan: media.MotionScan) -> list[shots_mod.Shot]:
     """Découpe chaque plan en vignettes s'il s'agit d'une mosaïque de caméras bord à bord."""
     from .multiview import detect_tiles, tile_label
@@ -627,6 +814,7 @@ def run(path: str, settings: Settings | None = None,
 
     # --- zone des mains par plan (aide facultative) ------------------------------
     masks: dict[int, np.ndarray] = {}
+    hand_boxes: dict[int, list] = {}
     hands_status = "désactivée"
     locator = HandLocator() if st.use_hands else None
     if locator is not None:
@@ -642,22 +830,27 @@ def run(path: str, settings: Settings | None = None,
         for si, ts in want.items():
             boxes = [b for t in ts if t in frames
                      for b in _boxes_in_region(locator, frames[t], shots[si].region)]
+            hand_boxes[si] = boxes
             m = visual.roi_from_boxes(boxes)
             if m is not None:
                 masks[si] = m
         locator.close()
 
     prog("Mesure des décalages", 0.85)
+    local = _tile_clap_candidates(path, shots, claps_by_shot, hand_boxes, st.max_offset, cancel)
     claps: list[Clap] = []
     for si, lst in sorted(claps_by_shot.items()):
         s = shots[si]
         sigs = visual.ShotSignal(scan, s)
         per = [(ac, visual.find_candidates(sigs, ac.t, st.max_offset, masks.get(si))) for ac in lst]
+        # vignette de mosaïque : les claps sont cherchés sur l'analyse fine de la vignette
+        per = [(ac, [v for v in c if v.kind == "flash"] + local[(si, ac.t)]) if (si, ac.t) in local
+               else (ac, c) for ac, c in per]
         # Un bip de mire est une note pure (fréquence mesurée), un clap un bruit large bande (None).
         # Les deux peuvent se trouver dans la même bande son (mosaïque caméras + mires) : chaque
         # plan ne garde que les événements de son type.
         from .pattern import tone_index
-        bips = [(ac, c) for ac, c in per if ac.freq is not None]
+        bips = _beep_train([(ac, c) for ac, c in per if ac.freq is not None])
         hand_claps = [(ac, c) for ac, c in per if ac.freq is None]
         # mire : au moins 2 bips qui tombent chacun sur un flash DE CETTE VIGNETTE (un seul « flash »
         # peut être un décor qui scintille). Bips SyncLive numérotés : recherche large (± 3,5 s),
@@ -668,7 +861,15 @@ def run(path: str, settings: Settings | None = None,
             fl = visual.flash_candidates(sigs, ac.t, 3.5) if wide else [v for v in c if v.kind == "flash"]
             flash_bips += bool(fl)
         kind = "flash" if flash_bips >= 2 else "clap"
-        keep = (bips if kind == "flash" else hand_claps) or per
+        if kind == "clap" and not _claps_agree(hand_claps, 1.0 / info.fps_float) and _periodic_flashes(sigs, s):
+            # une mire à l'écran mais pas de train de bips : son de la machine non enregistré.
+            # Les bruits du plateau ne doivent pas être pris pour des claps (l'animation de la
+            # mire leur fournirait toujours un « mouvement » à associer)
+            kind = "flash"
+            s.mire = True
+            keep = bips
+        else:
+            keep = (bips if kind == "flash" else hand_claps) or per
         method = "mire (flash)" if kind == "flash" else ("clap (mains)" if si in masks else "clap (mouvement)")
         for ac, cands in keep:
             claps.append(Clap(id=len(claps), shot=si, t_audio=ac.t, snr_db=ac.snr_db,
@@ -696,7 +897,7 @@ def run(path: str, settings: Settings | None = None,
     look = {s.index: s.look for s in shots}
     # un QR identifie la machine mieux que l'apparence (toutes les mires se ressemblent)
     key = {s.index: (("qr", s.qr) if s.qr else ("look", s.look)) for s in shots}
-    mire_looks: dict = {}
+    mire_looks: dict = {key[s.index]: True for s in shots if s.mire}
     for c in claps:
         k = key[c.shot]
         mire_looks[k] = mire_looks.get(k, False) or c.method.startswith("mire")
@@ -719,6 +920,7 @@ def run(path: str, settings: Settings | None = None,
             names[s.camera] = f"{prefix} {counters[prefix]}"
     an = Analysis(info=info, settings=st, shots=shots, claps=claps, camera_names=names,
                   look=look, hands_status=hands_status)
+    an.source_period = {s.index: _source_period(scan, s, an.period) for s in shots}
 
     # --- images représentatives -------------------------------------------------
     prog("Extraction des images", 0.93)
