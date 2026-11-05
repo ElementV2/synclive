@@ -31,6 +31,9 @@ Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), num
   de 1) et la durée de la boucle s'affiche en secondes (« 16 s »), par pas de 8 s.
 
 ### Corrigé
+- Image du clap réglée à la main : c'est maintenant la mesure de la source, à ± ½ image réelle. Les
+  claps automatiques de cette source (souvent mal appariés quand on a dû régler) ne la brouillent
+  plus : un réglage à −34 ms n'est plus noyé dans une marge de ± 35 ms et donne bien sa correction.
 - Réglage du clap : après avoir déplacé la timeline, un clic dans la bande pouvait rattacher
   l'image au mauvais son (référence prise sur les claps automatiques d'une source ambiguë) ou
   retenir une image voisine. L'image cliquée est maintenant celle retenue, et la vignette

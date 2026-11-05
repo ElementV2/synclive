@@ -241,6 +241,13 @@ def aggregate_camera(an: Analysis, cid: int) -> CameraResult:
             if c.forced is None and c.manual_t is None and c.selected.strength < 0.25 * top:
                 c.selected = None
     used = [c for c in claps if c.selected is not None]
+    # image du clap vérifiée à l'œil sur au moins un clap : c'est la mesure de cette source ; les
+    # claps automatiques (souvent mal appariés quand on a dû régler à la main) ne la brouillent plus
+    if any(c.manual_t is not None for c in used):
+        for c in used:
+            if c.manual_t is None:
+                c.selected = None
+        used = [c for c in used if c.manual_t is not None]
     offs = np.array([c.offset for c in used], dtype=np.float64)
     if offs.size:
         off = float(np.median(offs))

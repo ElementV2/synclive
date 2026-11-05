@@ -323,3 +323,21 @@ def test_manual_clap_frame_overrides_auto(tmp_path):
         cl.manual_t = None
     cam3 = next(x for x in an.cameras() if x.id == cam.id)
     assert not cam3.manual and abs(cam3.offset - auto) < 1e-9
+
+
+def test_one_manual_clap_is_the_measure_of_its_source(tmp_path):
+    """Image du clap réglée à la main sur UN clap : c'est la mesure de la source. Les claps
+    automatiques ne la brouillent plus (vidéo OBS du 12/10 : −34 ms réglé à la main, noyé dans
+    une marge de ± 35 ms par des claps automatiques mal appariés, donc aucune correction)."""
+    vid = tmp_path / "v.mkv"
+    make(str(vid), Fraction(30000, 1001), OFFS, ORDER)
+    an = analysis.run(str(vid), analysis.Settings(use_hands=False))
+    cam = next(c for c in an.cameras() if c.n_used >= 2)
+    c = next(cl for cl in cam.claps if cl.selected is not None)
+    per = 1001 / 30000
+    c.manual_t = c.selected.t - 2 * per
+    want = c.t_audio - c.manual_t
+    cam2 = next(x for x in an.cameras() if x.id == cam.id)
+    assert cam2.n_used == 1 and abs(cam2.offset - want) < 1e-9
+    real = 1.0 / cam2.source_fps if cam2.source_fps else per      # ± ½ image RÉELLE de la caméra
+    assert cam2.uncertainty <= 0.5 * real + 1e-9
