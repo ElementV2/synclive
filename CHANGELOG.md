@@ -4,6 +4,14 @@ Toutes les évolutions notables de SyncLive sont listées ici.
 Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), numérotation [SemVer](https://semver.org/lang/fr/) :
 `MAJEUR.MINEUR.CORRECTIF` (correctif = corrections, mineur = nouveautés compatibles, majeur = changements incompatibles).
 
+## [1.3.1] - 2026-11-05
+
+### Modifié
+- **Un seul fichier à télécharger** : `SyncLive-windows-x64.zip`, sans numéro de version. Le lien
+  https://github.com/ElementV2/synclive/releases/latest/download/SyncLive-windows-x64.zip donne
+  toujours la dernière version. Le code source de chaque version est l'archive « Source code » de
+  la release (`SOURCE.txt` et « À propos » mis à jour).
+
 ## [1.3.0] - 2026-11-05
 
 ### Ajouté
@@ -90,6 +98,7 @@ Première version (remplacée par la 1.1.0, qui apporte la mise à jour automati
 - Export : images annotées, récapitulatif, CSV, JSON.
 - Exécutable Windows autonome (licence GPL-3.0, composants tiers documentés).
 
+[1.3.1]: https://github.com/ElementV2/synclive/releases/tag/v1.3.1
 [1.3.0]: https://github.com/ElementV2/synclive/releases/tag/v1.3.0
 [1.2.0]: https://github.com/ElementV2/synclive/releases/tag/v1.2.0
 [1.1.1]: https://github.com/ElementV2/synclive/releases/tag/v1.1.1
