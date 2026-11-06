@@ -21,12 +21,28 @@ class AudioClap:
     freq: float | None = None   # fréquence d'un bip tonal (mire SyncLive), None pour un clap
 
 
+CHUNK_S = 30.0      # l'enveloppe se calcule par tranches (fichiers de plusieurs heures)
+PAD_S = 1.0         # recouvrement : le filtre aller-retour voit le signal de part et d'autre
+
+
 def _envelope(sig: np.ndarray, rate: int) -> np.ndarray:
+    """Enveloppe des aigus (> 1 kHz), lissée sur 1 ms. Calculée par tranches de 30 s qui se
+    recouvrent d'1 s : même résultat qu'en une fois, mais sans tableau de plusieurs Go pour un
+    live de 3 h, et l'analyse peut être annulée entre deux tranches."""
+    from .media import check_cancel
     sos = butter(4, 1000.0, btype="highpass", fs=rate, output="sos")
-    y = sosfiltfilt(sos, sig.astype(np.float64)).astype(np.float32)  # phase nulle : pas de retard
     win = max(1, int(rate * 0.001))
-    p = uniform_filter1d(y * y, size=win, mode="nearest")
-    return np.sqrt(np.maximum(p, 0.0))  # arrondis float32 : jamais de racine de négatif
+    n = sig.size
+    out = np.empty(n, np.float32)
+    chunk, pad = int(rate * CHUNK_S), int(rate * PAD_S)
+    for s0 in range(0, n, chunk):
+        check_cancel()
+        s1 = min(n, s0 + chunk)
+        a, b = max(0, s0 - pad), min(n, s1 + pad)
+        y = sosfiltfilt(sos, sig[a:b].astype(np.float64)).astype(np.float32)  # phase nulle : pas de retard
+        p = uniform_filter1d(y * y, size=win, mode="nearest")
+        out[s0:s1] = np.sqrt(np.maximum(p[s0 - a:s1 - a], 0.0))  # arrondis float32 : jamais de racine de négatif
+    return out
 
 
 def _tone_freq(sig: np.ndarray, rate: int, i0: int) -> float | None:

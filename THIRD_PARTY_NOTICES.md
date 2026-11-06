@@ -8,7 +8,8 @@ et restent soumis à leur propre licence.
 | [MediaPipe](https://github.com/google-ai-edge/mediapipe) et le modèle `models/hand_landmarker.task` | localisation des mains | Apache-2.0 |
 | [PyAV](https://github.com/PyAV-Org/PyAV) / [FFmpeg](https://ffmpeg.org) | décodage et encodage audio/vidéo | BSD-3-Clause (PyAV) ; FFmpeg LGPL/GPL selon la compilation |
 | [x264](https://www.videolan.org/developers/x264.html) (inclus dans les binaires PyAV) | encodage H.264 des mires | GPL-2.0-or-later |
-| [Qt for Python (PySide6)](https://www.qt.io/qt-for-python) | interface | LGPL-3.0 |
+| [Qt for Python (PySide6)](https://www.qt.io/qt-for-python), dont Qt Multimedia | interface, lecteur vidéo de l'onglet Montage | LGPL-3.0 |
+| [FFmpeg](https://ffmpeg.org) livré avec Qt Multimedia (`avcodec`, `avformat`, `avutil`, `swresample`, `swscale` dans `_internal/PySide6/`) | lecture vidéo de l'onglet Montage | LGPL-2.1-or-later |
 | [OpenCV](https://opencv.org) | traitement d'image, QR codes | Apache-2.0 |
 | [NumPy](https://numpy.org), [SciPy](https://scipy.org) | calcul | BSD-3-Clause |
 | [Pillow](https://python-pillow.org) | images | MIT-CMU |

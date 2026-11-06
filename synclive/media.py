@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from fractions import Fraction
 from typing import Callable
 
+import threading
+
 import av
 import cv2
 import numpy as np
@@ -23,6 +25,20 @@ THUMB_W, THUMB_H = 48, 27
 # échantillons pour la détection des vignettes : 384 = 2·3·4·16, les jointures d'une mosaïque
 # à 1/2, 1/3, 1/4, 2/3, 3/4 tombent sur un pixel entier (à 320, 2/3 = 213,3 : saut étalé)
 SAMPLE_W, SAMPLE_H = 384, 216
+
+
+_cancel = threading.local()
+
+
+def set_cancel(fn) -> None:
+    """Annulation de l'analyse en cours (pour ce fil) : les boucles longues la consultent."""
+    _cancel.fn = fn
+
+
+def check_cancel() -> None:
+    fn = getattr(_cancel, "fn", None)
+    if fn is not None and fn():
+        raise InterruptedError
 
 
 @dataclass
@@ -108,6 +124,7 @@ def decode_audio(path: str, stream_index: int = 0, progress: ProgressCb | None =
         t0: float | None = None
         n = 0
         for frame in c.decode(st):
+            check_cancel()
             if t0 is None and frame.time is not None:
                 # temps du premier échantillon corrigé de ce qui a déjà été accumulé
                 t0 = float(frame.time) - n / rate
@@ -271,6 +288,7 @@ def grab_frames(path: str, targets: list[float], max_width: int = 1920,
                 it = c.decode(vs)
             best = None
             for frame in it:
+                check_cancel()
                 ft = frame.time if frame.time is not None else 0.0
                 last_t = ft
                 if ft + half >= t:

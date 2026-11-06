@@ -49,7 +49,7 @@ def test_thumbnail_click_keeps_that_image_and_its_value(dialog):
         for frac in (0.15, 0.5, 0.85):
             d.chosen = {c.id: c.manual_t for c in d.claps}
             d.clap_box.setCurrentIndex(ci)
-            d.timeline.setValue(int(frac * (n - 1)))
+            d._choose_time(d._data()[0][int(frac * (n - 1))])
             app.processEvents()
             for j in (0, len(d._slots) // 2, len(d._slots) - 1):
                 t_thumb = d._t(d._slots[j])
@@ -63,27 +63,43 @@ def test_thumbnail_click_keeps_that_image_and_its_value(dialog):
                 assert _ms(label) == round((c.t_audio - got) * 1000)    # la valeur annoncée
                 d.chosen = {cl.id: cl.manual_t for cl in d.claps}
                 d.clap_box.setCurrentIndex(ci)
-                d.timeline.setValue(int(frac * (n - 1)))
+                d._choose_time(d._data()[0][int(frac * (n - 1))])
                 app.processEvents()
 
 
-def test_timeline_then_button_and_arrows(dialog):
+def _click(app, tl, t, drag_to=None):
+    from PySide6.QtCore import QPointF, Qt
+    from PySide6.QtTest import QTest
+    y = int(tl.height() / 2)
+    p0 = QPointF(tl.x_of(t), y).toPoint()
+    QTest.mousePress(tl, Qt.LeftButton, pos=p0)
+    app.processEvents()
+    p1 = p0 if drag_to is None else QPointF(tl.x_of(drag_to), y).toPoint()
+    if drag_to is not None:
+        QTest.mouseMove(tl, p1)
+        app.processEvents()
+    return p1
+
+
+def _shown(d) -> float:
+    return float(d.time_lbl.text().split()[0])
+
+
+def test_timeline_click_then_arrows(dialog):
+    """Clic sur la timeline : l'image est choisie tout de suite ; les flèches partent de là."""
     from PySide6.QtCore import Qt
     from PySide6.QtTest import QTest
     app, d = dialog
     d.chosen = {c.id: c.manual_t for c in d.claps}
     d.clap_box.setCurrentIndex(0)
     app.processEvents()
-    n = len(d._data()[0])
-    d.timeline.setValue(n // 3)                     # clic sur la timeline : choisie, comme les flèches
-    app.processEvents()
-    shown = float(d.time_lbl.text().split()[0])
-    c = d._clap()
-    assert abs(d.chosen[c.id] - shown) < 0.0006
-    d.pick_btn.click()
+    times = d._data()[0]
+    p = _click(app, d.timeline, times[len(times) // 3])
+    QTest.mouseRelease(d.timeline, Qt.LeftButton, pos=p)
     app.processEvents()
     c = d._clap()
-    assert abs(d.chosen[c.id] - shown) < 0.0006
+    assert abs(d.chosen[c.id] - _shown(d)) < 0.0006
+    assert abs(d.timeline.chosen - d.chosen[c.id]) < 1e-9 and abs(d.timeline.playhead - d.chosen[c.id]) < 1e-9
     t0 = d.chosen[c.id]
     QTest.keyClick(d, Qt.Key_Right)
     app.processEvents()
@@ -94,8 +110,8 @@ def test_timeline_then_button_and_arrows(dialog):
 
 
 def test_timeline_drag_chooses_on_release_only(dialog):
-    """Glisser la timeline ou la forme d'onde : l'image suit, elle n'est choisie qu'au relâchement,
-    et c'est exactement celle affichée à ce moment-là."""
+    """Glisser sur la timeline : l'image suit, elle n'est choisie qu'au relâchement, et c'est
+    exactement celle affichée à ce moment-là."""
     from PySide6.QtCore import QPointF, Qt
     from PySide6.QtTest import QTest
     app, d = dialog
@@ -103,25 +119,91 @@ def test_timeline_drag_chooses_on_release_only(dialog):
     d.clap_box.setCurrentIndex(0)
     app.processEvents()
     c = d._clap()
-    n = len(d._data()[0])
+    times = d._data()[0]
     before = d.chosen[c.id]
-    d.timeline.setSliderDown(True)                   # glisser en cours
-    for k in (n // 4, n // 3, n // 2):
-        d.timeline.setValue(k)
+    tl = d.timeline
+    y = tl.height() // 2
+    QTest.mousePress(tl, Qt.LeftButton, pos=QPointF(tl.x_of(times[len(times) // 4]), y).toPoint())
+    for frac in (0.3, 0.4, 0.5):
+        QTest.mouseMove(tl, QPointF(tl.x_of(times[int(frac * len(times))]), y).toPoint())
         app.processEvents()
-        assert d.chosen[c.id] == before              # rien n'est choisi pendant le glisser
-    shown = float(d.time_lbl.text().split()[0])
-    d.timeline.setSliderDown(False)                  # relâché
+        assert d.chosen[c.id] == before                  # rien n'est choisi pendant le glisser
+    shown = _shown(d)
+    QTest.mouseRelease(tl, Qt.LeftButton, pos=QPointF(tl.x_of(times[int(0.5 * len(times))]), y).toPoint())
     app.processEvents()
     c = d._clap()
     assert abs(d.chosen[c.id] - shown) < 0.0006
-    # forme d'onde : glisser puis relâcher
-    times = d._data()[0]
-    x = d.wave.x_of(times[len(times) // 3])
-    QTest.mousePress(d.wave, Qt.LeftButton, pos=QPointF(x, 20).toPoint())
-    QTest.mouseMove(d.wave, QPointF(x + 30, 20).toPoint())
+
+
+def test_pause_chooses_the_image_shown(dialog):
+    """▶ puis ⏸ : l'image où l'on met pause est choisie ; la fin de l'extrait ne change rien."""
+    import time
+    import synclive.ui_audio as ua
+    app, d = dialog
+    ua.AudioPlayer.play = lambda *a, **k: None
+    d.chosen = {c.id: c.manual_t for c in d.claps}
+    d.clap_box.setCurrentIndex(0)
     app.processEvents()
-    QTest.mouseRelease(d.wave, Qt.LeftButton, pos=QPointF(x + 30, 20).toPoint())
+    d.cur = 0
+    d.play_btn.click()
+    assert d._playing and d._timer.isActive()
+    t0 = time.time()
+    while time.time() - t0 < 0.3:
+        app.processEvents()
+        time.sleep(0.005)
+    d.play_btn.click()
     app.processEvents()
+    assert not d._playing and not d._timer.isActive()
     c = d._clap()
-    assert abs(d.chosen[c.id] - float(d.time_lbl.text().split()[0])) < 0.0006
+    assert d.chosen[c.id] is not None and abs(d.chosen[c.id] - _shown(d)) < 0.0006
+    # lecture jusqu'au bout : arrêt, retour sur l'image choisie, choix inchangé
+    kept = dict(d.chosen)
+    d._set_speed(1.0)
+    d.cur = len(d._data()[0]) - 3
+    d.play_btn.click()
+    t0 = time.time()
+    while d._playing and time.time() - t0 < 2:
+        app.processEvents()
+        time.sleep(0.005)
+    assert not d._playing and d.chosen == kept
+    assert abs(_shown(d) - d.chosen[d._clap().id]) < 0.0006
+
+
+def _wheel(app, w, dy):
+    from PySide6.QtCore import QPoint, QPointF, Qt
+    from PySide6.QtGui import QWheelEvent
+    from PySide6.QtWidgets import QApplication
+    pos = QPointF(w.width() / 2, w.height() / 2)
+    QApplication.sendEvent(w, QWheelEvent(pos, w.mapToGlobal(pos), QPoint(0, 0), QPoint(0, dy), Qt.NoButton,
+                                          Qt.NoModifier, Qt.NoScrollPhase, False))
+    app.processEvents()
+
+
+def test_video_size_is_stable_and_wheel_steps_images(dialog):
+    """La vidéo tient dans sa zone dès l'ouverture et ne change pas de taille au clic ; la molette
+    ne modifie aucune liste, elle passe d'une image à l'autre comme ← →."""
+    from PySide6.QtCore import QPointF, Qt
+    from PySide6.QtTest import QTest
+    app, d = dialog
+    d.chosen = {c.id: c.manual_t for c in d.claps}
+    d.clap_box.setCurrentIndex(0)
+    app.processEvents()
+    r0 = d.preview.drawn()
+    assert r0.width() <= d.preview.width() + 0.5 and r0.height() <= d.preview.height() + 0.5
+    assert abs(r0.width() - d.preview.width()) < 1 or abs(r0.height() - d.preview.height()) < 1   # ajustée
+    tl = d.timeline
+    QTest.mouseClick(tl, Qt.LeftButton, pos=QPointF(tl.x_of(d._data()[0][10]), tl.height() // 2).toPoint())
+    app.processEvents()
+    assert d.preview.drawn() == r0
+    state = (d.clap_box.currentIndex(), d.strip_box.currentIndex(), d.span_box.currentIndex())
+    for w in (d.clap_box, d.strip_box, d.span_box):
+        _wheel(app, w, -120)
+    assert (d.clap_box.currentIndex(), d.strip_box.currentIndex(), d.span_box.currentIndex()) == state
+    assert d.preview.drawn() == r0
+    for w in (d.preview, d.timeline):
+        c = d._clap()
+        t0 = d.chosen[c.id]
+        _wheel(app, w, -120)                       # molette vers soi : image suivante
+        assert d._clap() is c and d.chosen[c.id] > t0
+        _wheel(app, w, 120)
+        assert d._clap() is c and abs(d.chosen[c.id] - t0) < 1e-6

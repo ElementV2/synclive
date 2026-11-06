@@ -10,7 +10,7 @@ from pathlib import Path
 os.environ.setdefault("GLOG_minloglevel", "2")
 
 from PySide6.QtCore import QSize, Qt, QThread, QTimer, QUrl, Signal
-from PySide6.QtGui import QDesktopServices, QIcon, QImage, QPixmap
+from PySide6.QtGui import QDesktopServices, QGuiApplication, QIcon, QImage, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFrame, QGridLayout,
     QGroupBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox,
@@ -19,6 +19,8 @@ from PySide6.QtWidgets import (
 )
 
 from . import __version__, analysis, brand, export
+from .ui_loudness import LoudnessPage
+from .ui_montage import MontagePage
 from .ui_pattern import PatternPage
 from .ui_update import UpdateBanner
 
@@ -291,6 +293,10 @@ class MainWindow(QMainWindow):
         self.main_tabs.addTab(root, "Analyse")
         self.pattern_page = PatternPage()
         self.main_tabs.addTab(self.pattern_page, "Mires")
+        self.loud_page = LoudnessPage()
+        self.main_tabs.addTab(self.loud_page, "Normalisation")
+        self.montage_page = MontagePage()
+        self.main_tabs.addTab(self.montage_page, "Montage")
         v = QVBoxLayout(root)
 
         top = QHBoxLayout()
@@ -301,7 +307,8 @@ class MainWindow(QMainWindow):
         self._root_layout = v
 
         pr = QHBoxLayout()
-        self.status = QLabel("Prêt. Conseil : 3 à 5 claps secs par caméra, mains bien visibles.")
+        self.status = QLabel("Prêt. Pour le tournage : devant chaque caméra, tape 3 à 5 fois dans tes mains, "
+                             "bien fort et bien net, mains visibles à l'image, avec 1 seconde entre chaque.")
         self.status.setWordWrap(True)
         self.bar = QProgressBar()
         self.bar.setRange(0, 1000)
@@ -403,6 +410,9 @@ class MainWindow(QMainWindow):
     def _failed(self, msg: str) -> None:
         self.cancel_btn.setEnabled(False)
         self.bar.setValue(0)
+        if msg == "Analyse annulée.":           # annuler n'est pas une erreur : pas d'alerte à fermer
+            self.status.setText("Analyse annulée.")
+            return
         self.status.setText("Échec.")
         QMessageBox.warning(self, "SyncLive", msg)
 
@@ -686,7 +696,8 @@ class MainWindow(QMainWindow):
         if cam is None or not cam.claps:
             return
         dlg = ClapFrameDialog(self.an, cam, self)
-        dlg.resize(max(1000, int(self.width() * 0.9)), max(700, int(self.height() * 0.9)))
+        # haute d'office, et large juste ce qu'il faut pour la vidéo : elle doit être lisible
+        dlg.fit_to((self.screen() or QGuiApplication.primaryScreen()).availableGeometry())
         if dlg.exec() != ClapFrameDialog.Accepted:
             return
         ch = dlg.changes()
@@ -744,6 +755,8 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, e):
         self.pattern_page.shutdown()
+        self.loud_page.shutdown()
+        self.montage_page.shutdown()
         if self.worker and self.worker.isRunning():
             self.worker.cancel()
             self.worker.wait(3000)

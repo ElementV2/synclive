@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Son dans « Régler l'image du clap » : forme d'onde alignée sur la timeline (sons de clap
-détectés, image affichée, image choisie) et lecture du son avec la vidéo, ralentie au besoin."""
+"""Lecteur de « Régler l'image du clap » : la timeline (son, sons de clap détectés, image
+choisie, tête de lecture) et la lecture du son avec la vidéo, ralentie au besoin."""
 from __future__ import annotations
 
 import os
@@ -67,36 +67,48 @@ class AudioPlayer:
             pass
 
 
-class WaveView(QWidget):
-    """Forme d'onde de l'extrait chargé, sur le même axe que la timeline. Clic / glisser : se
-    placer à cet instant (signal `seek`)."""
+class Timeline(QWidget):
+    """Timeline du lecteur : le son de l'extrait chargé, une règle en secondes autour du son du
+    clap, les images réelles, le son du clap (orange), l'image choisie (vert) et la tête de lecture
+    (blanc, poignée ronde). Appuyer ou glisser : `scrub` (on affiche) ; relâcher : `released`
+    (l'image à cet instant est choisie)."""
 
-    seek = Signal(float)
-    released = Signal(float)     # bouton relâché : l'image à cet instant est choisie
+    scrub = Signal(float)
+    released = Signal(float)
+    step = Signal(int)      # molette : image précédente (-1) / suivante (+1)
 
-    MARGIN = 9          # px : aligné sur la course de la poignée de la timeline
+    MARGIN = 12         # px de chaque côté : la poignée reste entière aux extrémités
+    RULER = 20          # px : étiquette du son du clap et règle des secondes au-dessus de la piste
+    FLAGS = 18          # px : étiquette « image choisie » sous la piste
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setMinimumHeight(70)
-        self.setMaximumHeight(90)
+        self.setFixedHeight(112)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.setCursor(Qt.PointingHandCursor)
-        self.setToolTip("Son : en orange les sons détectés comme claps. Clic ou glisser pour s'y placer.")
+        self.setMouseTracking(True)
+        self.setToolTip("Clique ou glisse pour te placer : l'image où tu relâches devient l'image du clap.")
         self.sig = np.zeros(0, np.float32)
         self.rate = 48000
         self.t_sig = 0.0
         self.ta, self.tb = 0.0, 1.0
+        self.ref: float | None = None                 # son du clap : origine de la règle
         self.claps: list[tuple[float, bool]] = []     # (instant, clap courant ?)
+        self.frames: list[float] = []                 # instants des images réelles
         self.playhead: float | None = None
         self.chosen: float | None = None
+        self.dragging = False
+        self._hover: float | None = None
         self._env: tuple[np.ndarray, np.ndarray] | None = None
 
     def set_data(self, sig: np.ndarray, rate: int, t_sig: float, ta: float, tb: float,
-                 claps: list[tuple[float, bool]]) -> None:
+                 claps: list[tuple[float, bool]], frames: list[float] | None = None,
+                 ref: float | None = None) -> None:
         self.sig, self.rate, self.t_sig = sig, rate, t_sig
         self.ta, self.tb = ta, max(tb, ta + 1e-3)
         self.claps = claps
+        self.frames = list(frames or [])
+        self.ref = ref
         self._env = None
         self.update()
 
@@ -105,16 +117,21 @@ class WaveView(QWidget):
         self.update()
 
     # --- axe ---------------------------------------------------------------------------
+    def _w(self) -> int:
+        return max(1, self.width() - 2 * self.MARGIN)
+
     def x_of(self, t: float) -> float:
-        w = max(1, self.width() - 2 * self.MARGIN)
-        return self.MARGIN + (t - self.ta) / (self.tb - self.ta) * w
+        return self.MARGIN + (t - self.ta) / (self.tb - self.ta) * self._w()
 
     def t_of(self, x: float) -> float:
-        w = max(1, self.width() - 2 * self.MARGIN)
-        return self.ta + (x - self.MARGIN) / w * (self.tb - self.ta)
+        x = min(max(x, self.MARGIN), self.MARGIN + self._w())
+        return self.ta + (x - self.MARGIN) / self._w() * (self.tb - self.ta)
+
+    def _track(self) -> QRectF:
+        return QRectF(self.MARGIN, self.RULER, self._w(), self.height() - self.RULER - self.FLAGS)
 
     def _envelope(self) -> tuple[np.ndarray, np.ndarray]:
-        w = max(1, self.width() - 2 * self.MARGIN)
+        w = self._w()
         if self._env is not None and self._env[0].size == w:
             return self._env
         lo = np.zeros(w, np.float32)
@@ -132,51 +149,120 @@ class WaveView(QWidget):
         return self._env
 
     # --- dessin ----------------------------------------------------------------------
+    def _chip(self, p: QPainter, x: float, y: float, text: str, color: QColor) -> None:
+        fm = p.fontMetrics()
+        w = fm.horizontalAdvance(text) + 12
+        x0 = min(max(x - w / 2, 0), self.width() - w)
+        r = QRectF(x0, y, w, 16)
+        p.setPen(Qt.NoPen)
+        p.setBrush(color)
+        p.drawRoundedRect(r, 4, 4)
+        p.setPen(QColor("#16161A"))
+        p.drawText(r, Qt.AlignCenter, text)
+
     def paintEvent(self, _e):
         p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing, False)
-        r = self.rect()
-        p.fillRect(r, BG)
-        mid = r.height() / 2
-        amp = r.height() / 2 - 4
+        p.setRenderHint(QPainter.Antialiasing, True)
+        p.fillRect(self.rect(), BG)
+        f = QFont(self.font())
+        f.setPixelSize(11)
+        p.setFont(f)
+        tr = self._track()
+        p.setPen(QPen(QColor("#2A2A30"), 1))
+        p.setBrush(QColor("#1C1C21"))
+        p.drawRoundedRect(tr, 6, 6)
+        # règle : secondes par rapport au son du clap (graduations dans le haut de la piste)
+        ref = self.ref if self.ref is not None else self.ta
+        span = self.tb - self.ta
+        minor, major = (0.1, 0.5) if span <= 4.5 else (0.5, 1.0)
+        per_major = int(round(major / minor))
+        k0 = int(np.ceil((self.ta - ref) / minor - 1e-6))
+        k1 = int(np.floor((self.tb - ref) / minor + 1e-6))
+        for k in range(k0, k1 + 1):
+            x = self.x_of(ref + k * minor)
+            is_major = k % per_major == 0
+            p.setPen(QPen(QColor("#4A4A52") if is_major else QColor("#303037"), 1))
+            p.drawLine(QPointF(x, tr.top() + 1), QPointF(x, tr.top() + (7 if is_major else 4)))
+            if is_major and k != 0:
+                lab = f"{k * minor:+g} s".replace(".", ",").replace("-", "−")
+                p.setPen(QColor("#6E6B66"))
+                p.drawText(QRectF(x - 30, tr.top() + 7, 60, 13), Qt.AlignCenter, lab)
+        # son
         lo, hi = self._envelope()
+        mid = tr.center().y() + 4
+        amp = tr.height() / 2 - 10
+        p.setRenderHint(QPainter.Antialiasing, False)
         p.setPen(QPen(WAVE, 1))
         for i in range(lo.size):
             x = self.MARGIN + i
             p.drawLine(QPointF(x, mid - hi[i] * amp), QPointF(x, mid - lo[i] * amp))
-        f = QFont(self.font())
-        f.setPixelSize(11)
-        p.setFont(f)
+        # images réelles : petits repères au bas de la piste, s'il y a la place
+        if len(self.frames) > 1 and self._w() / len(self.frames) >= 4:
+            p.setPen(QPen(QColor("#3A3A42"), 1))
+            for t in self.frames:
+                x = round(self.x_of(t))
+                p.drawLine(QPointF(x, tr.bottom() - 5), QPointF(x, tr.bottom() - 1))
+        p.setRenderHint(QPainter.Antialiasing, True)
+        # sons de clap détectés : le courant en plein, les autres en pointillé
         for t, current in self.claps:
             if not (self.ta <= t <= self.tb):
                 continue
             x = self.x_of(t)
-            p.setPen(QPen(ORANGE, 3 if current else 1, Qt.SolidLine if current else Qt.DashLine))
-            p.drawLine(QPointF(x, 0), QPointF(x, r.height()))
+            p.setPen(QPen(ORANGE, 2 if current else 1, Qt.SolidLine if current else Qt.DashLine))
+            p.drawLine(QPointF(x, tr.top()), QPointF(x, tr.bottom()))
             if current:
-                p.drawText(QRectF(x + 4, 2, 140, 14), Qt.AlignLeft, "son du clap")
+                self._chip(p, x, 1, "son du clap", ORANGE)
         if self.chosen is not None and self.ta <= self.chosen <= self.tb:
             x = self.x_of(self.chosen)
             p.setPen(QPen(GREEN, 2))
-            p.drawLine(QPointF(x, 0), QPointF(x, r.height()))
-            p.drawText(QRectF(x + 4, r.height() - 16, 140, 14), Qt.AlignLeft, "image choisie")
+            p.drawLine(QPointF(x, tr.top()), QPointF(x, tr.bottom()))
+            self._chip(p, x, tr.bottom() + 2, "image choisie", GREEN)
+        if self._hover is not None and not self.dragging:
+            x = self.x_of(self._hover)
+            p.setPen(QPen(QColor(255, 255, 255, 60), 1))
+            p.drawLine(QPointF(x, tr.top()), QPointF(x, tr.bottom()))
+        # tête de lecture : trait blanc et poignée ronde
         if self.playhead is not None and self.ta <= self.playhead <= self.tb:
             x = self.x_of(self.playhead)
-            p.setPen(QPen(QColor("#FFFFFF"), 1))
-            p.drawLine(QPointF(x, 0), QPointF(x, r.height()))
+            p.setPen(QPen(QColor("#FFFFFF"), 2))
+            p.drawLine(QPointF(x, tr.top()), QPointF(x, tr.bottom()))
+            r = 7.5 if self.dragging else 6.0
+            p.setPen(QPen(BG, 2))
+            p.setBrush(QColor("#FFFFFF"))
+            p.drawEllipse(QPointF(x, tr.center().y()), r, r)
         p.end()
 
     def resizeEvent(self, e):
         self._env = None
         super().resizeEvent(e)
 
+    # --- souris ------------------------------------------------------------------------
     def mousePressEvent(self, e):
-        self.seek.emit(self.t_of(e.position().x()))
+        if e.button() == Qt.LeftButton:
+            self.dragging = True
+            self.setCursor(Qt.SizeHorCursor)
+            self.scrub.emit(self.t_of(e.position().x()))
 
     def mouseMoveEvent(self, e):
-        if e.buttons() & Qt.LeftButton:
-            self.seek.emit(self.t_of(e.position().x()))
+        self._hover = self.t_of(e.position().x())
+        if self.dragging and e.buttons() & Qt.LeftButton:
+            self.scrub.emit(self._hover)
+        self.update()
 
     def mouseReleaseEvent(self, e):
-        if e.button() == Qt.LeftButton:
+        if e.button() == Qt.LeftButton and self.dragging:
+            self.dragging = False
+            self.setCursor(Qt.PointingHandCursor)
             self.released.emit(self.t_of(e.position().x()))
+            self.update()
+
+    def wheelEvent(self, e):
+        dy = e.angleDelta().y()
+        if dy and not self.dragging:
+            self.step.emit(-1 if dy > 0 else 1)
+        e.accept()
+
+    def leaveEvent(self, e):
+        self._hover = None
+        self.update()
+        super().leaveEvent(e)

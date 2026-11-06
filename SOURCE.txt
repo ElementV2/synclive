@@ -21,4 +21,7 @@ Offre écrite
   via https://github.com/ElementV2.
 
 Qt (PySide6) est utilisé sous LGPL-3.0 : ses bibliothèques sont livrées sous forme de DLL
-séparées dans _internal/ et peuvent être remplacées par une autre version compatible.
+séparées dans _internal/ et peuvent être remplacées par une autre version compatible. Le module
+Qt Multimedia (lecteur de l'onglet Montage) utilise les DLL FFmpeg livrées avec Qt
+(_internal/PySide6/avcodec-*.dll, avformat-*, avutil-*, swresample-*, swscale-*), sous LGPL ;
+leurs sources : https://code.qt.io et https://ffmpeg.org.

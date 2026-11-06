@@ -4,6 +4,49 @@ Toutes les évolutions notables de SyncLive sont listées ici.
 Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), numérotation [SemVer](https://semver.org/lang/fr/) :
 `MAJEUR.MINEUR.CORRECTIF` (correctif = corrections, mineur = nouveautés compatibles, majeur = changements incompatibles).
 
+## [1.4.0] - 2026-11-06
+
+### Ajouté
+- **Onglet « Normalisation » : tous les médias au même niveau sonore** (régie : plus d'écart de volume
+  d'une vidéo à l'autre pour l'ingé son). Glisser-déposer de fichiers et de dossiers, mesure
+  aussitôt (EBU R128 : niveau intégré, crête vraie, dynamique), écart à la cible visible sur
+  chaque ligne, cibles −23 / −16 / −14 LUFS ou personnalisée, « Cible commune » pour tout le
+  lot. Gain linéaire et limiteur de crête vraie (6 dB au plus) ; vidéo recopiée sans réencodage,
+  son dans sa famille de codec d'origine, synchro gardée ; chaque fichier écrit est remesuré et
+  refait si besoin. Formats : MP4, MOV, MKV, WebM, AVI, MXF, TS, M2TS, MPG, FLV, WMV, 3GP, WAV,
+  AIFF, FLAC, MP3, M4A, OGG, WMA.
+- **Onglet « Montage » : couper un live entier sans perte.** Ouverture immédiate même pour 6 h.
+  La timeline est le montage, comme dans un logiciel de montage : morceaux bout à bout, supprimer
+  un morceau recolle les suivants, la lecture enchaîne les morceaux ; marqueurs DÉBUT / FIN du
+  montage (instant dans le montage et dans le fichier) et raccords. Lecteur avec le son, aperçu de
+  l'image en temps réel dans la timeline, aperçu du son rempli en tâche de fond. « Début ici »,
+  « Fin ici », « Couper ici », « Supprimer le morceau », déplacer les morceaux, Ctrl+Z ; flèches
+  ← → image par image. Coupes calées sur les images clés ; export en recopie (vidéo et son tels
+  quels) à la vitesse du disque : un live de 3 h dont on enlève 45 min en 10 s. Option « son
+  recalculé à l'échantillon près ».
+- **Réglage de l'image du clap : nouveau lecteur.** Bouton lecture / pause (Espace) qui joue la
+  vidéo avec son son, à vitesse normale, ×1/2 ou ×1/4, sans sauter d'image. Une seule timeline :
+  le son, une règle en secondes autour du son du clap, les sons détectés comme claps, l'image
+  choisie et la tête de lecture. L'image où l'on clique ou relâche, celle où l'on met pause, une
+  vignette ou les flèches ← → deviennent l'image du clap (plus de bouton « Choisir cette image »).
+  La molette sur la vidéo ou la timeline passe d'une image à l'autre.
+
+### Modifié
+- Fenêtre « Régler l'image du clap » : ouverte à la hauteur de l'écran et juste à la largeur de
+  la vidéo (elle n'est plus étirée sur un écran large) ; la vidéo est toujours ajustée à sa zone.
+- Conseil de tournage en clair : « tape 3 à 5 fois dans tes mains, bien fort et bien net… ».
+- Messages de l'onglet Normalisation en clair quand un fichier ne peut pas monter jusqu'à la cible
+  (« montera à −21,8 au lieu de −16 (pics trop forts) »).
+
+### Corrigé
+- Analyse : « Annuler » est pris en compte tout de suite (en moins d'¼ s), à toutes les étapes,
+  même pendant la lecture du son d'un fichier de 3 h (24 s d'attente auparavant), et n'affiche plus
+  d'alerte « échec ». La recherche des claps traite le son par tranches : un live de plusieurs
+  heures ne réclame plus un tableau de plusieurs Go en mémoire.
+- Réglage du clap : la vidéo ne change plus de taille au premier clic, la molette ne modifie plus
+  les listes (clap, bande, durée) par accident, et une image rattachée au son d'un autre clap
+  (claps rapprochés) garde exactement l'image affichée.
+
 ## [1.3.2] - 2026-11-05
 
 ### Ajouté
@@ -152,6 +195,7 @@ Première version (remplacée par la 1.1.0, qui apporte la mise à jour automati
 - Export : images annotées, récapitulatif, CSV, JSON.
 - Exécutable Windows autonome (licence GPL-3.0, composants tiers documentés).
 
+[1.4.0]: https://github.com/ElementV2/synclive/releases/tag/v1.4.0
 [1.3.2]: https://github.com/ElementV2/synclive/releases/tag/v1.3.2
 [1.3.1]: https://github.com/ElementV2/synclive/releases/tag/v1.3.1
 [1.3.0]: https://github.com/ElementV2/synclive/releases/tag/v1.3.0

@@ -61,7 +61,7 @@ def render(bg: np.ndarray, gap: float, cx: int) -> np.ndarray:
 
 def make(path: str, fps: Fraction, offsets: dict[str, float], order: list[str],
          shot_len: float = 5.5, claps_per_shot: int = 4, seed: int = 1,
-         audio_codec: str = "pcm_s16le") -> list[dict]:
+         audio_codec: str = "pcm_s16le", gop: int | None = None) -> list[dict]:
     rng = np.random.default_rng(seed)
     bgs = {cam: background(seed * 100 + i) for i, cam in enumerate(sorted(offsets))}
     centers = {cam: 220 + 100 * i for i, cam in enumerate(sorted(offsets))}
@@ -97,7 +97,7 @@ def make(path: str, fps: Fraction, offsets: dict[str, float], order: list[str],
     out = av.open(path, "w")
     vs = out.add_stream("libx264", rate=fps)
     vs.width, vs.height, vs.pix_fmt = W, H, "yuv420p"
-    vs.options = {"crf": "20", "preset": "veryfast"}
+    vs.options = {"crf": "20", "preset": "veryfast", **({"g": str(gop), "keyint_min": str(gop)} if gop else {})}
     silent = None
     as_ = out.add_stream(audio_codec, rate=SR)
     as_.layout = "mono"

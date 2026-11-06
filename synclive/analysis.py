@@ -810,6 +810,7 @@ def _auto_audio(path: str, info: media.VideoInfo, st: Settings, stage) -> tuple[
                 raise
             continue
         for sens in (st.audio_sensitivity, st.audio_sensitivity * 2.0):
+            media.check_cancel()
             cl = audio_claps.detect_claps(sig, rate, t0, sens)
             if len(cl) > len(best[0]):
                 best = (cl, tr, sens)
@@ -824,8 +825,20 @@ def _auto_audio(path: str, info: media.VideoInfo, st: Settings, stage) -> tuple[
 def run(path: str, settings: Settings | None = None,
         progress: Callable[[str, float], None] | None = None,
         cancel: Callable[[], bool] | None = None) -> Analysis:
+    media.set_cancel(cancel)
+    try:
+        return _run(path, settings, progress, cancel)
+    finally:
+        media.set_cancel(None)
+
+
+def _run(path, settings, progress, cancel) -> Analysis:
     st = settings or Settings()
-    prog = progress or (lambda s, f: None)
+    report = progress or (lambda s, f: None)
+
+    def prog(name: str, f: float) -> None:
+        media.check_cancel()                    # « Annuler » pris en compte à chaque avancement
+        report(name, f)
 
     def stage(name: str, a: float, b: float):
         return lambda f: prog(name, a + (b - a) * f)
@@ -837,6 +850,7 @@ def run(path: str, settings: Settings | None = None,
 
     scan = media.scan_video(path, info, stage("Analyse des images", 0.12, 0.75), cancel)
 
+    media.check_cancel()
     prog("Découpe en plans", 0.76)
     shots = shots_mod.detect_shots(scan, st.cut_threshold)
     shots_mod.group_cameras(scan, shots, st.group_threshold)
