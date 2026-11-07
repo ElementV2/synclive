@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 from . import __version__, analysis, brand, export
+from .ui_threads import stop
 from .ui_loudness import LoudnessPage
 from .ui_montage import MontagePage
 from .ui_pattern import PatternPage
@@ -817,8 +818,20 @@ class MainWindow(QMainWindow):
         self.montage_page.shutdown()
         if self.worker and self.worker.isRunning():
             self.worker.cancel()
-            self.worker.wait(3000)
+            stop(self.worker, 3000)
         super().closeEvent(e)
+
+
+def install_french(app) -> None:
+    """Boutons et fenêtres standard de Qt en français (Oui / Non, Annuler, ouvrir un fichier…)."""
+    from PySide6.QtCore import QLibraryInfo, QLocale, QTranslator
+    tr = QTranslator(app)
+    for d in (QLibraryInfo.path(QLibraryInfo.TranslationsPath),
+              str(Path(getattr(sys, "_MEIPASS", "")) / "PySide6" / "translations")):
+        if tr.load(QLocale(QLocale.French, QLocale.France), "qtbase", "_", d):
+            app.installTranslator(tr)
+            app._fr = tr                         # gardé en vie avec l'application
+            return
 
 
 def main() -> int:
@@ -827,6 +840,7 @@ def main() -> int:
     app = QApplication(sys.argv)
     applog.install_qt_handler()
     app.setApplicationName("SyncLive")
+    install_french(app)
     app.setStyleSheet(STYLE)
     app.setWindowIcon(QIcon(str(brand.asset("app-icon-256.png"))))
     w = MainWindow()

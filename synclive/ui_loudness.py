@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from . import loudness as L
+from .ui_threads import release, stop
 from .applog import error as log_error, log
 
 ORANGE = "#FF5A1F"
@@ -787,6 +788,7 @@ class LoudnessPage(QWidget):
         for it in self.items:
             if it.state == "travail":
                 it.state = "prêt"
+        release(self.norm)
         self.norm = None
         self._refresh()
         if cancelled:
@@ -1005,11 +1007,11 @@ class LoudnessPage(QWidget):
     def shutdown(self) -> None:
         if self.norm is not None:
             self.norm.cancel()
-            self.norm.wait(5000)
+            stop(self.norm)
         for it in self.items:
             self.meter.drop(it.path)
         self.meter.stop()
-        self.meter.wait(5000)
+        stop(self.meter)
         self.planner.gen += 1
         self.planner.stop()
-        self.planner.wait(5000)
+        stop(self.planner)

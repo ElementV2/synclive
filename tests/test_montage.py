@@ -380,3 +380,47 @@ def test_track_meter_all_tracks(tmp_path, monkeypatch):
     app.processEvents()
     assert page.listen_box.currentData() == 1 and ed.meter.listened == 1
     page.shutdown()
+
+
+def test_reopen_ignores_late_preview_frames(tmp_path, monkeypatch):
+    """Rouvrir / repartir de zéro : une image d'aperçu encore en route vers l'ancien banc ne doit
+    rien faire planter (le lecteur de l'ancien banc est déjà détruit) ; un fil qui finit n'est
+    jamais détruit en tournant."""
+    import time as _t
+    from PySide6.QtWidgets import QApplication
+    from synclive.ui_montage import MontagePage
+    from synclive import ui_threads
+    monkeypatch.setenv("SYNCLIVE_PROJECTS_DIR", str(tmp_path / "projets"))
+    app = QApplication.instance() or QApplication([])
+    src = str(tmp_path / "live.mp4")
+    media_gen.make(src, "parole", -20.0, 12.0, media_gen.FORMATS[0], seed=5)
+    page = MontagePage()
+    page.show()
+    errors = []
+    monkeypatch.setattr(sys, "excepthook", lambda et, ev, tb: errors.append(ev))
+    for _round in range(3):
+        page.open_file(src)
+        ed = page.editor
+        ed.audio.setVolume(0.0)
+        for t in (1.0, 4.0, 7.0, 9.5):
+            ed._goto_out(t, resume=False)
+            app.processEvents()
+        page.close_file()                       # l'ancien banc part pendant que des images arrivent
+        t0 = _t.perf_counter()
+        while _t.perf_counter() - t0 < 0.4:
+            app.processEvents()
+    assert not errors, errors
+    page.shutdown()
+
+    class Slow(ui_threads.QThread):
+        def run(self):
+            _t.sleep(0.3)
+    th = Slow()
+    th.start()
+    ui_threads.release(th)
+    del th
+    t0 = _t.perf_counter()
+    while ui_threads._alive and _t.perf_counter() - t0 < 3:
+        app.processEvents()
+        _t.sleep(0.01)
+    assert not ui_threads._alive

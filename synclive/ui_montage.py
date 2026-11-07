@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 )
 
 from . import montage as M
+from .ui_threads import release, stop
 from .applog import error as log_error, log
 from .ui_edit import EditorPanel, Source, fmt_t, kept
 
@@ -520,7 +521,7 @@ class MontagePage(QWidget):
     def close_file(self) -> None:
         if self.pworker is not None:
             self.pworker.cancel()
-            self.pworker.wait(5000)
+            stop(self.pworker)
             self.pworker = None
         if self.editor is not None:
             self.save()
@@ -632,6 +633,7 @@ class MontagePage(QWidget):
         self.pause_lbl.setText(f"Repérage… {what} ({int(f * 100)} %)")
 
     def _end_pauses(self) -> None:
+        release(self.pworker)                    # il finit son « run » : le garder jusqu'au bout
         self.pworker = None
         self.pbar.setVisible(False)
         self.pcancel.setVisible(False)
@@ -881,6 +883,7 @@ class MontagePage(QWidget):
         self.result.setText(f"Export… {int(f * 100)} % — encore {fmt_t(max(0.0, self._eta), False)} environ")
 
     def _end(self) -> None:
+        release(self.worker)
         self.worker = None
         for s in self.srcs:
             if s.overview is not None:
@@ -924,5 +927,5 @@ class MontagePage(QWidget):
     def shutdown(self) -> None:
         if self.worker is not None:
             self.worker.cancel()
-            self.worker.wait(10000)
+            stop(self.worker, 10000)
         self.close_file()

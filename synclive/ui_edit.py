@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
 
 from . import montage as M
 from .ui_clap import FrameView
+from .ui_threads import release
 
 Segment = tuple[int, float, float]        # (n° du fichier, début, fin) — instants du fichier
 
@@ -104,7 +105,8 @@ class ScrubDecoder(QThread):
         with self._cond:
             self._stop = True
             self._cond.notify()
-        self.wait(3000)
+        if not self.wait(3000):
+            release(self)                        # image en cours de décodage : gardé jusqu'au bout
 
     def _newer(self, gen: int) -> bool:
         return self._gen != gen or self._stop
@@ -627,6 +629,7 @@ class EditorPanel(QWidget):
         self._seen_loading = True
         self._load_started = 0.0
         self._scrubs: dict[int, ScrubDecoder] = {}
+        self._closed = False
 
         v = QVBoxLayout(self)
         v.setSpacing(10)
@@ -853,7 +856,7 @@ class EditorPanel(QWidget):
         return out
 
     def _update_meter(self) -> None:
-        if not self.isVisible():
+        if self._closed or not self.isVisible():
             return
         n = max((len(x.media.audio) for x in self.srcs), default=0)
         s = self._src_index()
@@ -937,7 +940,7 @@ class EditorPanel(QWidget):
         return int(round((t - src.start) * 1000))
 
     def _on_still(self, s: int, ft: float, img, exact: bool) -> None:
-        if s != self._src_index():
+        if self._closed or s != self._src_index():
             return                                 # image d'un autre fichier (ancienne demande)
         if exact:
             self._frame_t = ft                     # instant exact de l'image affichée
@@ -1285,11 +1288,16 @@ class EditorPanel(QWidget):
         self.timeline.set_state(self.segments, self.selected, out)
 
     def shutdown(self) -> None:
+        self._closed = True                      # les images encore en route sont ignorées
         self._meter_timer.stop()
         for r in self._readers.values():
             r.stop()
         self._readers.clear()
         for sd in self._scrubs.values():
+            try:
+                sd.frame.disconnect()
+            except (RuntimeError, TypeError):
+                pass
             sd.stop()
         self._scrubs.clear()
         self.player.stop()

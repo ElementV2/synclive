@@ -22,6 +22,15 @@ Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), num
 - **Journal** : bouton « Journal » pour voir les actions et les erreurs, les copier ou ouvrir
   leur dossier ; les erreurs donnent le détail dans le journal.
 
+### Corrigé
+- Montage : plus d'erreur en rouvrant un montage ou en repartant de zéro (une image d'aperçu
+  arrivait encore à l'ancien lecteur).
+- Plus de fil de travail détruit avant sa fin (« QThread: Destroyed while thread is still
+  running ») à la fin d'un repérage, d'un export, d'une normalisation ou à la fermeture.
+- Boutons des questions en français (Oui / Non au lieu de Yes / No), ainsi que les fenêtres
+  standard de Qt.
+- Journal : une erreur n'est plus écrite deux fois ; alerte de police de Qt sans effet ignorée.
+
 ## [1.4.0] - 2026-11-06
 
 ### Ajouté

@@ -288,6 +288,7 @@ refus d'un autre format ; montage enregistré et repris. Journal et rapport de n
 | `synclive/montage.py` | montage sans perte des longs fichiers (images clés, aperçu du son, pauses, plusieurs fichiers, export, enregistrement) |
 | `synclive/loudness_report.py` | rapport de niveaux (HTML, CSV pour Excel) |
 | `synclive/applog.py` | journal de l'app (actions, erreurs) |
+| `synclive/ui_threads.py` | fils de travail Qt gardés jusqu'à leur vraie fin |
 | `synclive/cli.py` | ligne de commande |
 | `synclive/ui.py` | fenêtre principale, onglet Analyse |
 | `synclive/ui_clap.py`, `synclive/ui_audio.py` | réglage de l'image du clap (lecteur, timeline, son) |

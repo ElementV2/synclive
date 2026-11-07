@@ -73,6 +73,8 @@ def setup() -> None:
 
     def hook(et, ev, tb):
         log.critical("Erreur imprévue", exc_info=(et, ev, tb))
+        if isinstance(sys.stderr, _StreamToLog):
+            return                               # la trace est déjà au journal (pas en double)
         if _prev_hook is not None and _prev_hook is not hook:
             _prev_hook(et, ev, tb)
     _prev_hook = sys.excepthook
@@ -108,6 +110,15 @@ def _header() -> None:
         pass
 
 
+def _where(msg: str) -> str:
+    """Pour les alertes Qt dont on veut trouver la cause : l'endroit du code qui l'a provoquée."""
+    if "QThread" not in msg and "QFont" not in msg:
+        return ""
+    import traceback
+    st = [f for f in traceback.extract_stack()[:-3] if "synclive" in f.filename]
+    return "".join(f"\n    à {Path(f.filename).name}:{f.lineno} ({f.name})" for f in st[-4:])
+
+
 def install_qt_handler() -> None:
     """Avertissements et erreurs de Qt dans le journal (les simples infos sont ignorées)."""
     try:
@@ -115,11 +126,12 @@ def install_qt_handler() -> None:
 
         def handler(kind, _ctx, msg):
             if kind in (QtMsgType.QtWarningMsg,):
-                if "propagateSizeHints" in msg:          # bruit connu de Qt sous Windows
+                if "propagateSizeHints" in msg or "QFont::setPointSize: Point size <= 0" in msg:
+                    # bruits connus de Qt : Windows ; 1re liste déroulante ouverte avec une police en pixels (sans effet)
                     return
-                log.warning(f"Qt : {msg}")
+                log.warning(f"Qt : {msg}" + _where(msg))
             elif kind in (QtMsgType.QtCriticalMsg, QtMsgType.QtFatalMsg):
-                log.error(f"Qt : {msg}")
+                log.error(f"Qt : {msg}" + _where(msg))
         qInstallMessageHandler(handler)
     except Exception:
         pass
