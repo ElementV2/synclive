@@ -7,6 +7,7 @@ chaque fichier : vidéo intacte (pas de réencodage), son au niveau cible, synch
 from __future__ import annotations
 
 import math
+import time
 import queue
 import traceback
 from pathlib import Path
@@ -15,11 +16,12 @@ from PySide6.QtCore import QRectF, QSettings, Qt, QThread, QTimer, QUrl, Signal
 from PySide6.QtGui import QColor, QDesktopServices, QKeySequence, QPainter, QPen, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFrame, QHBoxLayout,
-    QHeaderView, QLabel, QMenu, QProgressBar, QPushButton, QRadioButton, QSizePolicy,
+    QHeaderView, QLabel, QMenu, QMessageBox, QProgressBar, QPushButton, QRadioButton, QSizePolicy,
     QStyledItemDelegate, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 from . import loudness as L
+from .applog import error as log_error, log
 
 ORANGE = "#FF5A1F"
 GREEN = "#3FB950"
@@ -129,7 +131,7 @@ class MeasureWorker(QThread):
             except InterruptedError:
                 pass
             except Exception as e:
-                traceback.print_exc()
+                log_error(f"Normalisation : mesure impossible : {p}")
                 self.failed.emit(p, _reason(e))
 
 
@@ -161,7 +163,7 @@ class PlanWorker(QThread):
                 try:
                     pl = L.plans_for(info, target, None)[0]
                 except Exception:
-                    traceback.print_exc()
+                    log_error(f"Normalisation : calcul du gain impossible : {path}")
                     continue
                 self.planned.emit(gen, path, pl)
 
@@ -188,11 +190,14 @@ class NormalizeWorker(QThread):
                 plans, after = L.normalize_checked(path, dst, info, self.target,
                                                    lambda f, p=path: self.progress.emit(p, f), lambda: self._cancel,
                                                    segs)
+                a = after.main
+                log.info(f"Normalisation : {path} -> {dst} ({a.integrated:.1f} LUFS, crête {a.true_peak:.1f} dBTP)"
+                         if a is not None else f"Normalisation : {path} -> {dst}")
                 self.finished_one.emit(path, str(dst), plans, after)
             except InterruptedError:
                 break
             except Exception as e:
-                traceback.print_exc()
+                log_error(f"Normalisation : écriture impossible : {path} -> {dst}")
                 self.failed.emit(path, _reason(e))
         self.all_done.emit(self._cancel)
 
@@ -495,6 +500,11 @@ class LoudnessPage(QWidget):
         self.clear_btn.clicked.connect(self._clear)
         act.addWidget(self.rm_btn)
         act.addWidget(self.clear_btn)
+        self.report_btn = QPushButton("Rapport…")
+        self.report_btn.setToolTip("Rapport de niveaux pour l'ingé son : page HTML (imprimable en PDF) ou tableau "
+                                   "CSV pour Excel")
+        self.report_btn.clicked.connect(self._report)
+        act.addWidget(self.report_btn)
         act.addStretch(1)
         self.bar = QProgressBar()
         self.bar.setRange(0, 1000)
@@ -782,6 +792,52 @@ class LoudnessPage(QWidget):
         if cancelled:
             self.bar_lbl.setText("Normalisation annulée.")
 
+    def _report_rows(self):
+        from .loudness_report import Row
+        rows = []
+        for it in self.items:
+            info, tr, pl = it.info, (it.info.main if it.info is not None else None), it.plan
+            a = it.after.main if it.after is not None else None
+            st, _col = self._state_text(it)
+            rows.append(Row(
+                name=Path(it.path).name, path=it.path, duration=info.duration if info else 0.0,
+                tracks=len(info.tracks) if info else 0,
+                lufs=tr.integrated if tr is not None and not tr.silent else None,
+                peak=tr.true_peak if tr is not None and not tr.silent else None,
+                lra=tr.lra if tr is not None and not tr.silent else None,
+                gain=pl.gain_db if pl is not None else None, limited=pl.limited_db if pl is not None else None,
+                expected=pl.expected_lufs if pl is not None else None,
+                after_lufs=a.integrated if a is not None else None, after_peak=a.true_peak if a is not None else None,
+                output=str(it.out) if it.out is not None and it.state == "fait" else "",
+                state=st, note=(pl.note if pl is not None else "") or it.error))
+        return rows
+
+    def _report(self) -> None:
+        from .loudness_report import write_csv, write_html
+        if not self.items:
+            return
+        base = (self.out_dir if self.out_choose.isChecked() and self.out_dir else str(Path(self.items[0].path).parent))
+        default = str(Path(base) / f"rapport_niveaux_{time.strftime('%Y-%m-%d_%Hh%M')}.html")
+        p, flt = QFileDialog.getSaveFileName(self, "Rapport de niveaux", default,
+                                             "Page HTML, imprimable en PDF (*.html);;Tableau CSV pour Excel (*.csv)")
+        if not p:
+            return
+        path = Path(p)
+        if path.suffix.lower() not in (".html", ".htm", ".csv"):
+            path = path.with_suffix(".csv" if "csv" in flt.lower() else ".html")
+        t = self.target()
+        try:
+            if path.suffix.lower() == ".csv":
+                write_csv(self._report_rows(), path, t.lufs, t.peak)
+            else:
+                write_html(self._report_rows(), path, t.lufs, t.peak, self.preset.currentText().split(":")[0])
+            log.info(f"Normalisation : rapport écrit -> {path}")
+        except Exception as e:
+            log_error(f"Normalisation : rapport impossible -> {path}")
+            QMessageBox.warning(self, "Rapport", f"Impossible d'écrire le rapport :\n{e}")
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+
     def _open_out(self) -> None:
         outs = [it.out for it in self.items if it.out is not None and it.state == "fait"]
         if outs:
@@ -922,6 +978,7 @@ class LoudnessPage(QWidget):
         self.rm_btn.setEnabled(not busy and bool(self.table.selectionModel().selectedRows()))
         self.clear_btn.setEnabled(not busy and bool(self.items))
         self.common_btn.setEnabled(not busy and sum(1 for it in self.items if it.info is not None) >= 1)
+        self.report_btn.setEnabled(any(it.info is not None for it in self.items))
         for w in (self.preset, self.lufs, self.peak, self.limiter, self.out_beside, self.out_choose,
                   self.out_dir_btn):
             w.setEnabled(not busy)

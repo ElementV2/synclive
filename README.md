@@ -95,6 +95,9 @@ l'écart restant après arrondi.
   chaque original, ou tous dans un dossier choisi (`clip_norm-23LUFS.mp4`).
 - Mesure rapide : une seule lecture du fichier pour toutes ses pistes (84 s de vidéo à 6 pistes
   son : 1,5 s).
+- **Rapport de niveaux** (« Rapport… ») : une page HTML lisible (résumé, écart à la cible de
+  chaque fichier) ou un tableau CSV qui s'ouvre directement dans Excel (niveau, crête, dynamique,
+  gain, niveau obtenu, fichier écrit).
 
 **Montage d'un live entier (onglet Montage)**
 - Pour un live de plusieurs heures : enlever le début, la fin, les écrans d'attente ou de pause,
@@ -106,6 +109,10 @@ l'écart restant après arrondi.
   morceaux. Marqueurs **DÉBUT** et **FIN** du montage (instant dans le montage, et instant correspondant dans le
   fichier d'origine), raccords marqués ✂, son de chaque morceau ; molette : zoom.
 - Lecteur avec le son ; aperçu de l'image **en temps réel** quand on glisse dans la timeline.
+- **Vumètre de toutes les pistes son** à côté de l'image, en même temps : une barre par piste
+  (−60 à 0 dBFS), crête gardée et sa valeur, la piste écoutée en orange ; cliquer une barre fait
+  écouter cette piste. Il suit la lecture et montre le niveau à la tête de lecture à l'arrêt, même
+  dans un live de plusieurs heures juste ouvert.
 - Clavier : Espace lecture / pause, ← → **image par image** (à travers les raccords), Maj+← → 1 s,
   , . image clé précédente / suivante. Se déplacer pendant la lecture met en pause (l'image suit)
   et la lecture reprend une seule fois au nouvel endroit.
@@ -122,6 +129,20 @@ l'écart restant après arrondi.
   et ne s'accumule pas.
 - Option « son recalculé à l'échantillon près » : synchro exacte, son réencodé dans le même
   format (≈ 4 min pour 3 h), vidéo toujours recopiée.
+- **Repérer les pauses** : les écrans d'attente fixes sont trouvés tout seuls. Pour un écran
+  animé (logo qui bouge, boucle vidéo), se placer dessus et cliquer « Écran comme celui-ci » :
+  tous les passages qui lui ressemblent sont retrouvés. Si la musique des pauses est sur sa propre
+  piste son (par ex. piste 1 = live, piste 6 = musique), SyncLive la reconnaît, la propose et
+  repère ses passages. Les pauses trouvées sont hachurées dans la timeline ; on passe de l'une à
+  l'autre, on enlève celle-ci, on l'ignore, ou on les enlève toutes. Les bornes restent dans la
+  pause, sur des images clés. « Écouter » choisit la piste son entendue dans le lecteur.
+- **Plusieurs fichiers dans un montage** : un live enregistré en plusieurs parties se monte d'un
+  seul tenant (« Ajouter un fichier à la suite… », ou glisser le fichier). Les fichiers doivent
+  avoir le même format (codec, taille d'image, son) : sinon SyncLive dit pourquoi. La lecture
+  enchaîne d'un fichier à l'autre ; l'export reste sans perte (en recopie).
+- **Montage enregistré tout seul** : à chaque modification. En rouvrant la même vidéo, le
+  montage reprend où on l'a laissé (« Repartir de zéro » pour l'oublier) ; les derniers montages
+  sont proposés à l'ouverture de l'onglet. Un fichier modifié depuis n'est pas repris.
 
 **Multiview maison**
 - Une mosaïque de caméras bord à bord, sans séparateur, est découpée automatiquement en vignettes :
@@ -132,6 +153,11 @@ l'écart restant après arrondi.
 - SyncLive affiche un lien et un QR code. Chaque machine ouvre le lien dans son navigateur, reçoit
   son identifiant, puis lance la boucle en plein écran ou télécharge le MP4. Aucune installation.
 - Le n° de chaque machine se change à distance, directement sur sa ligne.
+
+**Journal**
+- Le bouton « Journal » (en haut à droite) montre ce que l'app a fait et les erreurs, avec
+  « Copier tout » pour l'envoyer et « Ouvrir le dossier du journal »
+  (`%LOCALAPPDATA%\SyncLive\journal\synclive.log`).
 
 **Sans réglage, à jour tout seul**
 - Aucun réglage : piste audio et sensibilité sont choisies automatiquement.
@@ -239,7 +265,9 @@ MKV/Opus, MXF, WAV, MP3 et 5.1) normalisés, avec contrôle du niveau, de la cr�
 
 Onglet Montage : ouverture, images clés, export en copie et en son recalculé, morceaux dans le
 désordre, en MP4/AAC, MOV/PCM, MKV/Opus et MXF : durée, vidéo identique au bit près, synchro de
-chaque morceau ; gestes de l'onglet (glisser le fichier, I, O, C, Suppr, déplacer, Ctrl+Z, export).
+chaque morceau ; gestes de l'onglet (glisser le fichier, I, O, C, Suppr, déplacer, Ctrl+Z, export) ;
+pauses (écran fixe, écran animé, piste de musique des pauses) ; plusieurs fichiers bout à bout et
+refus d'un autre format ; montage enregistré et repris. Journal et rapport de niveaux (HTML, CSV).
 
 ## Structure
 
@@ -257,7 +285,9 @@ chaque morceau ; gestes de l'onglet (glisser le fichier, I, O, C, Suppr, déplac
 | `synclive/multiview.py` | découpe des mosaïques en vignettes |
 | `synclive/updater.py`, `synclive/ui_update.py` | mises à jour depuis les releases GitHub |
 | `synclive/loudness.py` | mesure EBU R128, normalisation du son |
-| `synclive/montage.py` | montage sans perte des longs fichiers (images clés, aperçu du son, export) |
+| `synclive/montage.py` | montage sans perte des longs fichiers (images clés, aperçu du son, pauses, plusieurs fichiers, export, enregistrement) |
+| `synclive/loudness_report.py` | rapport de niveaux (HTML, CSV pour Excel) |
+| `synclive/applog.py` | journal de l'app (actions, erreurs) |
 | `synclive/cli.py` | ligne de commande |
 | `synclive/ui.py` | fenêtre principale, onglet Analyse |
 | `synclive/ui_clap.py`, `synclive/ui_audio.py` | réglage de l'image du clap (lecteur, timeline, son) |

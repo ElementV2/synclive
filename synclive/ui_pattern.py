@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 )
 
 from . import pattern, server
+from .applog import error as log_error, log
 
 
 def pil_to_pixmap(im) -> QPixmap:
@@ -68,7 +69,7 @@ class PatternWorker(QThread):
         except InterruptedError:
             self.failed.emit("Génération annulée.")
         except Exception as e:
-            traceback.print_exc()
+            log_error("Mires : génération impossible")
             self.failed.emit(f"{type(e).__name__} : {e}")
 
 

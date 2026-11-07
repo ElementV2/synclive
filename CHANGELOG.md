@@ -4,6 +4,24 @@ Toutes les évolutions notables de SyncLive sont listées ici.
 Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), numérotation [SemVer](https://semver.org/lang/fr/) :
 `MAJEUR.MINEUR.CORRECTIF` (correctif = corrections, mineur = nouveautés compatibles, majeur = changements incompatibles).
 
+## [1.5.0] - 2026-11-07
+
+### Ajouté
+- **Montage : repérer les pauses.** Écrans d'attente fixes trouvés tout seuls ; écran animé
+  (logo qui bouge, boucle) retrouvé partout avec « Écran comme celui-ci » ; piste son de la
+  musique des pauses reconnue et proposée (ex. piste 1 = live, piste 6 = musique) et ses passages
+  repérés. Pauses hachurées dans la timeline : précédente / suivante, enlever celle-ci, ignorer,
+  tout enlever. « Écouter » choisit la piste son du lecteur.
+- **Montage : vumètre de toutes les pistes son** à côté de l'image, en même temps (crête,
+  valeur, piste écoutée en orange) ; clic sur une barre = écouter cette piste.
+- **Montage : plusieurs fichiers bout à bout** (live en plusieurs parties), lecture qui enchaîne
+  d'un fichier à l'autre, export sans perte ; un fichier d'un autre format est refusé avec la raison.
+- **Montage enregistré tout seul** et repris à la réouverture de la vidéo ; derniers montages
+  proposés.
+- **Rapport de niveaux** dans l'onglet Normalisation : page HTML ou tableau CSV pour Excel.
+- **Journal** : bouton « Journal » pour voir les actions et les erreurs, les copier ou ouvrir
+  leur dossier ; les erreurs donnent le détail dans le journal.
+
 ## [1.4.0] - 2026-11-06
 
 ### Ajouté
@@ -195,6 +213,7 @@ Première version (remplacée par la 1.1.0, qui apporte la mise à jour automati
 - Export : images annotées, récapitulatif, CSV, JSON.
 - Exécutable Windows autonome (licence GPL-3.0, composants tiers documentés).
 
+[1.5.0]: https://github.com/ElementV2/synclive/releases/tag/v1.5.0
 [1.4.0]: https://github.com/ElementV2/synclive/releases/tag/v1.4.0
 [1.3.2]: https://github.com/ElementV2/synclive/releases/tag/v1.3.2
 [1.3.1]: https://github.com/ElementV2/synclive/releases/tag/v1.3.1

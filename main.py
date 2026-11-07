@@ -22,10 +22,17 @@ def _log_file():
         return open(os.devnull, "w", encoding="utf-8")
 
 
-if sys.stdout is None or sys.stderr is None:
-    log = _log_file()
-    sys.stdout = sys.stdout or log
-    sys.stderr = sys.stderr or log
+# journal : erreurs et événements dans %LOCALAPPDATA%\SyncLive\journal (bouton « Journal » de l'app) ;
+# sans console (exe fenêtré), ce qui serait écrit sur la console y va aussi
+try:
+    from synclive import applog
+
+    applog.setup()
+except Exception:
+    if sys.stdout is None or sys.stderr is None:
+        log = _log_file()
+        sys.stdout = sys.stdout or log
+        sys.stderr = sys.stderr or log
 
 if len(sys.argv) > 1 and sys.argv[1] == "--cli":
     from synclive.cli import main as cli_main

@@ -12,9 +12,9 @@ os.environ.setdefault("GLOG_minloglevel", "2")
 from PySide6.QtCore import QSize, Qt, QThread, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QGuiApplication, QIcon, QImage, QPixmap
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFrame, QGridLayout,
+    QApplication, QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QFileDialog, QFrame, QGridLayout,
     QGroupBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox,
-    QProgressBar, QPushButton, QScrollArea, QSizePolicy, QSpinBox, QSplitter, QTableWidget,
+    QPlainTextEdit, QProgressBar, QPushButton, QScrollArea, QSizePolicy, QSpinBox, QSplitter, QTableWidget,
     QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget,
 )
 
@@ -23,6 +23,7 @@ from .ui_loudness import LoudnessPage
 from .ui_montage import MontagePage
 from .ui_pattern import PatternPage
 from .ui_update import UpdateBanner
+from .applog import error as log_error, log
 
 VIDEO_EXT = {".mp4", ".mov", ".mkv", ".avi", ".mxf", ".m4v", ".ts", ".mts", ".m2ts", ".webm", ".flv"}
 
@@ -102,14 +103,16 @@ class Worker(QThread):
         self._cancel = True
 
     def run(self) -> None:
+        log.info(f"Analyse : {self.path}")
         try:
             an = analysis.run(self.path, self.settings,
                               lambda s, f: self.progress.emit(s, f), lambda: self._cancel)
             self.done.emit(an)
         except InterruptedError:
+            log.info("Analyse annulée")
             self.failed.emit("Analyse annulée.")
         except Exception as e:
-            traceback.print_exc()
+            log_error(f"Analyse impossible : {self.path}")
             self.failed.emit(f"{type(e).__name__} : {e}")
 
 
@@ -255,6 +258,51 @@ class NoWheelComboBox(QComboBox):
         e.ignore()
 
 
+class LogDialog(QDialog):
+    """Le journal : ce qui s'est passé et les erreurs, à copier ou à envoyer en cas de problème."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        from . import applog
+        self.setWindowTitle("Journal de SyncLive")
+        self.resize(1000, 620)
+        v = QVBoxLayout(self)
+        where = QLabel(f"Fichier : {applog.log_file()}")
+        where.setStyleSheet("color:#8A8780;")
+        where.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        v.addWidget(where)
+        hint = QLabel("En cas de problème, copie ce journal (ou envoie le fichier) : il dit ce qui s'est passé "
+                      "et où.")
+        hint.setWordWrap(True)
+        v.addWidget(hint)
+        self.text = QPlainTextEdit()
+        self.text.setReadOnly(True)
+        self.text.setLineWrapMode(QPlainTextEdit.NoWrap)
+        self.text.setStyleSheet("font-family: Consolas, 'Segoe UI'; font-size: 12px;")
+        v.addWidget(self.text, 1)
+        row = QHBoxLayout()
+        refresh = QPushButton("Actualiser")
+        refresh.clicked.connect(self._load)
+        copy = QPushButton("Copier tout")
+        copy.clicked.connect(lambda: QApplication.clipboard().setText(self.text.toPlainText()))
+        folder = QPushButton("Ouvrir le dossier du journal")
+        folder.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(applog.log_dir()))))
+        close = QPushButton("Fermer")
+        close.setObjectName("primary")
+        close.clicked.connect(self.accept)
+        for b in (refresh, copy, folder):
+            row.addWidget(b)
+        row.addStretch(1)
+        row.addWidget(close)
+        v.addLayout(row)
+        self._load()
+
+    def _load(self) -> None:
+        from . import applog
+        self.text.setPlainText(applog.tail())
+        self.text.verticalScrollBar().setValue(self.text.verticalScrollBar().maximum())
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -283,6 +331,11 @@ class MainWindow(QMainWindow):
         about.setStyleSheet("QPushButton { background: transparent; border: none; color: #8A8780; padding: 4px; }"
                             "QPushButton:hover { color: #F2F0EB; }")
         about.clicked.connect(self.show_about)
+        journal = QPushButton("Journal")
+        journal.setStyleSheet(about.styleSheet())
+        journal.setToolTip("Ce qui s'est passé et les erreurs (à envoyer en cas de problème)")
+        journal.clicked.connect(self.show_log)
+        cl.addWidget(journal)
         logo = QLabel()
         logo.setPixmap(svg_pixmap(brand.asset("lockup-dark-bg.svg"), 24))
         logo.setStyleSheet("background: transparent;")
@@ -414,9 +467,11 @@ class MainWindow(QMainWindow):
             self.status.setText("Analyse annulée.")
             return
         self.status.setText("Échec.")
-        QMessageBox.warning(self, "SyncLive", msg)
+        QMessageBox.warning(self, "SyncLive", msg + "\n\nLe détail est dans le journal (bouton « Journal » "
+                            "en haut à droite).")
 
     def _done(self, an: analysis.Analysis) -> None:
+        log.info(f"Analyse terminée : {len(an.cameras())} source(s), {len(an.claps)} clap(s)")
         self.an = an
         self._undo.clear()
         self.undo_btn.setEnabled(False)
@@ -540,6 +595,9 @@ class MainWindow(QMainWindow):
     def resizeEvent(self, e):
         super().resizeEvent(e)
         QTimer.singleShot(0, self._layout_cards)
+
+    def show_log(self) -> None:
+        LogDialog(self).exec()
 
     def show_about(self) -> None:
         """Mentions légales (GPL-3.0, section 0 : « Appropriate Legal Notices »)."""
@@ -764,7 +822,10 @@ class MainWindow(QMainWindow):
 
 
 def main() -> int:
+    from . import applog
+    applog.setup()
     app = QApplication(sys.argv)
+    applog.install_qt_handler()
     app.setApplicationName("SyncLive")
     app.setStyleSheet(STYLE)
     app.setWindowIcon(QIcon(str(brand.asset("app-icon-256.png"))))

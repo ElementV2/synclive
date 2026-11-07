@@ -14,6 +14,8 @@ import pytest
 from scipy.signal import fftconvolve
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+os.environ.setdefault("SYNCLIVE_PROJECTS_DIR",                  # montages de test, à part
+                      os.path.join(os.environ.get("TEMP", "/tmp"), "synclive_test_montages"))
 os.environ.setdefault("SYNCLIVE_SETTINGS_INI",                  # réglages de test, à part
                       os.path.join(os.environ.get("TEMP", "/tmp"), "synclive_test_settings.ini"))
 if sys.platform == "win32":
