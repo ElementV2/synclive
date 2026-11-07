@@ -4,6 +4,13 @@ Toutes les évolutions notables de SyncLive sont listées ici.
 Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), numérotation [SemVer](https://semver.org/lang/fr/) :
 `MAJEUR.MINEUR.CORRECTIF` (correctif = corrections, mineur = nouveautés compatibles, majeur = changements incompatibles).
 
+## [Non publié]
+
+### Modifié
+- Conseils de tournage réécrits (README) : comment faire un bon clap (mains jointes une
+  demi-seconde, claps espacés d'au moins 1 s…), plusieurs caméras, que faire si la mesure semble
+  fausse ; même conseil dans l'app (onglet Analyse) et dans l'info-bulle du réglage du clap.
+
 ## [1.6.0] - 2026-11-07
 
 ### Corrigé

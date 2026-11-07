@@ -21,7 +21,8 @@ L'application a quatre onglets :
 
 Mesure du décalage :
 
-1. Devant chaque caméra, on fait quelques **claps**. Sur chaque PC ou console, on lance une **mire SyncLive**.
+1. Devant chaque caméra, on fait quelques **claps** (comment bien les faire : [Conseils de tournage](#conseils-de-tournage)).
+   Sur chaque PC ou console, on lance une **mire SyncLive**.
 2. On enregistre le programme (OBS, mélangeur, enregistreur…).
 3. On glisse l'enregistrement dans SyncLive.
 
@@ -48,6 +49,7 @@ l'écart restant après arrondi.
   (même mire sur deux PC) sont séparées par leur QR code et par leur décalage, même sans coupe visible.
 - **Claps** : instant où les mains s'arrêtent net, avec une précision meilleure qu'une image.
   La zone des mains est ciblée automatiquement, avec l'aide de MediaPipe quand les mains sont visibles.
+  Garder les mains jointes une demi-seconde après chaque clap (voir [Conseils de tournage](#conseils-de-tournage)).
 - **Mires** : flash d'une image, mesuré à l'échantillon audio près.
 - **Caméras lentes** : une caméra qui filme moins d'images que le fichier (20 i/s dans un fichier
   à 59.94, image recopiée 2 ou 3 fois) est reconnue ; seules ses vraies images comptent, et la
@@ -56,12 +58,14 @@ l'écart restant après arrondi.
   renommer, fusionner, déplacer un plan, exclure un clap, choisir un autre candidat, **supprimer
   une source** où il ne se passe rien (« Annuler la dernière modification » la remet).
 - **Régler l'image du clap à la main, sur tout le rush** : la timeline montre le plan entier avec
-  ses sons de clap et s'ouvre sur leur zone (clic ou glisser : y aller, l'image suit ; molette :
-  zoom ; « Tout le plan » ; ■ : début). On choisit le son dans la liste, on se place sur l'image où
-  les mains se touchent (lecture avec le son ×1, ×½, ×¼, bande de 9, 15 ou 21 images, ← →,
-  « Zoom sur les mains », « Éclaircir ») et **« Cette image est le clap »** (Entrée) la retient
-  pour ce son. « Ce son n'est pas un clap » écarte un bruit de micro. Une fois validée, l'image
-  fait la mesure de la source et la carte de la source la montre.
+  ses sons de clap et s'ouvre sur leur zone (clic ou glisser : y aller, l'image suit aussitôt ;
+  molette : zoom ; « Tout le plan » ou double-clic ; ■ ou touche Début : début du plan ; liste
+  « Plan » si la source apparaît plusieurs fois). On choisit le son dans la liste, on se place sur
+  l'image où les mains se touchent (lecture fluide avec le son ×1, ×½, ×¼, bande de 9, 15 ou 21
+  images, ← →, « Zoom sur les mains », « Éclaircir ») et **« Cette image est le clap »** (Entrée)
+  la retient pour ce son : se déplacer ne choisit rien. « Ce son n'est pas un clap » écarte un
+  bruit de micro. Une fois validée, l'image fait la mesure de la source et la carte de la source
+  la montre.
 - Export : une image annotée par source, un récapitulatif, `plan_correction.csv`,
   `rapport_claps.csv` et `rapport.json`.
 
@@ -165,7 +169,8 @@ l'écart restant après arrondi.
 **Journal**
 - Le bouton « Journal » (en haut à droite) montre ce que l'app a fait et les erreurs, avec
   « Copier tout » pour l'envoyer et « Ouvrir le dossier du journal »
-  (`%LOCALAPPDATA%\SyncLive\journal\synclive.log`).
+  (`%LOCALAPPDATA%\SyncLive\journal\synclive.log`). Il note aussi le résultat de chaque source
+  après l'analyse, chaque réglage à la main et la durée du démarrage.
 
 **Démarrage**
 - Une petite fenêtre « SyncLive démarre… » s'affiche aussitôt, puis la fenêtre complète (moins
@@ -252,13 +257,49 @@ Options : `--max-offset` (ms), `--audio-track`, `--sensitivity`, `--group-thresh
 
 ## Conseils de tournage
 
-- Devant chaque caméra, taper 3 à 5 fois dans ses mains, fort et net (un coup bref, pas un
-  applaudissement mou), mains visibles et éclairées, environ 1 s entre deux claps.
-- Au moins 2 s de plan stable par source.
+### Le bon clap
+
+SyncLive compare deux instants : le **son** du clap et l'**image** où les mains se touchent. Sur
+l'image, il cherche le moment où les mains **s'arrêtent net**. Un clap bien fait donne un seul
+arrêt net, au contact ; un clap mal fait en donne deux, et la mesure peut se tromper d'environ
+200 ms.
+
+1. **Mains bien visibles** : entièrement dans le champ de la caméra, face à elle, éclairées (dans le
+   noir l'image est floue et l'arrêt se voit mal).
+2. **Un coup sec et fort**, comme un clap de cinéma : le son doit claquer net. Pas d'applaudissement
+   mou ni de frottement.
+3. **Garder les mains jointes une demi-seconde** après le contact, puis les rouvrir calmement.
+   Si on les rouvre tout de suite, le geste d'ouverture s'arrête net lui aussi (≈ 0,2 s après) et
+   peut être pris pour le contact.
+4. **3 à 5 claps par caméra, à au moins 1 seconde d'écart.** Plusieurs claps donnent une mesure
+   sûre (SyncLive prend la médiane et écarte les mauvais) ; trop rapprochés (moins d'une demi-seconde),
+   on ne sait plus quel son va avec quelle image.
+5. **Au moins 2 secondes de plan stable** sur chaque source (pas de coupe ni de mouvement de caméra
+   pendant les claps).
+
+À éviter : taper hors du champ ou derrière un objet, taper très près du micro (le son sature), parler
+ou faire du bruit pendant les claps (un choc ou un bruit de micro peut être pris pour un clap).
+
+### Plusieurs caméras
+
+- **Caméras filmées séparément (plans successifs)** : faire les claps devant chaque caméra, l'une
+  après l'autre.
+- **Mosaïque (multiview, plusieurs caméras dans la même image)** : un seul clap vu par toutes les
+  caméras suffit pour les mesurer toutes. Chaque caméra doit voir les mains.
 - Avec un seul clap par caméra, la mesure est donnée en confiance « faible » : vérifie-la dans
-  l'onglet *Détail*.
-- Le navigateur ajoute sa propre latence audio : si une machine lit ses médias avec un autre lecteur
-  en production, télécharge le MP4 et lis-le en boucle avec ce lecteur.
+  « Régler l'image du clap ».
+
+### Si la mesure semble fausse
+
+Ouvrir « Régler l'image du clap… » sur la source : choisir le son dans la liste, se placer sur
+l'image où les mains se touchent (clic sur la timeline, ← →, lecture au ralenti ×½ ou ×¼), puis
+« Cette image est le clap ». Un son qui n'est pas un clap (bruit de micro, choc) s'écarte avec
+« Ce son n'est pas un clap ».
+
+### Mires
+
+Le navigateur ajoute sa propre latence audio : si une machine lit ses médias avec un autre lecteur
+en production, télécharger le MP4 de la mire et le lire en boucle avec ce lecteur.
 
 ## Tests
 
@@ -268,8 +309,11 @@ Options : `--max-offset` (ms), `--audio-track`, `--sensitivity`, `--group-thresh
 
 Les tests génèrent des vidéos synthétiques à décalage connu : claps à 25, 29.97 et 60 i/s ; caméra
 lente ; mires avec sources identiques, latences différentes et décalages supérieurs à une période ;
-MP4/AAC ; partage réseau ; plan de correction ; gestes du réglage du clap (clic, glisser, flèches,
-molette, lecture et pause).
+MP4/AAC ; partage réseau ; plan de correction ; mosaïques (grilles, bandes, vignettes libres sur
+fond uni, caméra incrustée) et caméras seules qui ne doivent pas être découpées (étagère, bord de
+panneau avec un passant) ; gestes du réglage du clap (tout le plan, clic, glisser, flèches, vignettes,
+molette, lecture, pause, Stop, « Cette image est le clap », son écarté, image qui reste au clap
+sélectionné, clic hors des images chargées).
 
 Onglet Normalisation : mesure comparée aux signaux de test EBU (Tech 3341) ; médias générés au hasard
 (`tests/media_gen.py` : musique, parole, pub, ambiance, de −60 à −8 dB, en MP4/AAC, MOV/PCM 24 bits,
@@ -281,6 +325,9 @@ désordre, en MP4/AAC, MOV/PCM, MKV/Opus et MXF : durée, vidéo identique au bi
 chaque morceau ; gestes de l'onglet (glisser le fichier, I, O, C, Suppr, déplacer, Ctrl+Z, export) ;
 pauses (écran fixe, écran animé, piste de musique des pauses) ; plusieurs fichiers bout à bout et
 refus d'un autre format ; montage enregistré et repris. Journal et rapport de niveaux (HTML, CSV).
+
+Vidéos réelles (banque locale `videos_test/`, non publiée) : `tools/videos_test.py check` analyse des
+mosaïques composées de vraies caméras à décalage connu et compare chaque vignette à l'attendu.
 
 ## Structure
 
@@ -295,7 +342,7 @@ refus d'un autre format ; montage enregistré et repris. Journal et rapport de n
 | `synclive/export.py` | plan de correction, images annotées, rapports |
 | `synclive/pattern.py` | générateur de mires |
 | `synclive/server.py` | partage réseau |
-| `synclive/multiview.py` | découpe des mosaïques en vignettes |
+| `synclive/multiview.py` | découpe des mosaïques en vignettes, caméras incrustées |
 | `synclive/updater.py`, `synclive/ui_update.py` | mises à jour depuis les releases GitHub |
 | `synclive/loudness.py` | mesure EBU R128, normalisation du son |
 | `synclive/montage.py` | montage sans perte des longs fichiers (images clés, aperçu du son, pauses, plusieurs fichiers, export, enregistrement) |
@@ -305,7 +352,7 @@ refus d'un autre format ; montage enregistré et repris. Journal et rapport de n
 | `synclive/cli.py` | ligne de commande |
 | `synclive/boot.py` | démarrage : petite fenêtre tout de suite, puis chargement du reste |
 | `synclive/ui.py` | fenêtre principale, onglet Analyse |
-| `synclive/ui_clap.py`, `synclive/ui_audio.py` | réglage de l'image du clap (lecteur, timeline, son) |
+| `synclive/ui_clap.py`, `synclive/ui_audio.py` | réglage de l'image du clap (tout le plan, lecteur, timeline, bande d'images) |
 | `synclive/ui_pattern.py` | onglet Mires |
 | `synclive/ui_loudness.py` | onglet Normalisation |
 | `synclive/ui_montage.py` | onglet Montage |
@@ -339,6 +386,6 @@ SyncLive est un logiciel libre distribué sous **GNU General Public License v3.0
 ([LICENSE](LICENSE)). Copyright (C) 2026 ElementV2.
 
 Ce choix découle des composants embarqués : FFmpeg, tel que fourni par PyAV, est compilé avec x264
-et x265 (GPL). Le lecteur vidéo de l'onglet Montage (Qt Multimedia) utilise les bibliothèques FFmpeg
-livrées avec Qt (LGPL). Les composants tiers et leurs licences sont listés dans
+et x265 (GPL). Le lecteur vidéo de l'onglet Montage et du réglage du clap (Qt Multimedia) utilise
+les bibliothèques FFmpeg livrées avec Qt (LGPL). Les composants tiers et leurs licences sont listés dans
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

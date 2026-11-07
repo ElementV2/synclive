@@ -231,8 +231,8 @@ class CameraCard(QFrame):
             row.addWidget(btn)
         lay.addLayout(row)
         adj = QPushButton("Régler l'image du clap…" if not cam.manual else "Image du clap réglée à la main ✓ — modifier…")
-        adj.setToolTip("Bande d'images autour du clap : clique l'image où les mains se touchent "
-                       "si l'automatique s'est trompé")
+        adj.setToolTip("Tout le plan de la source : pour chaque son de clap, place-toi sur l'image où les mains "
+                       "se touchent et clique « Cette image est le clap »")
         adj.clicked.connect(lambda: self.adjust.emit(self.cam.id))
         if cam.ambiguous and not cam.manual:
             adj.setObjectName("primary")      # pas de mesure sûre : c'est l'action à faire
@@ -362,7 +362,8 @@ class MainWindow(QMainWindow):
 
         pr = QHBoxLayout()
         self.status = QLabel("Prêt. Pour le tournage : devant chaque caméra, tape 3 à 5 fois dans tes mains, "
-                             "bien fort et bien net, mains visibles à l'image, avec 1 seconde entre chaque.")
+                             "bien fort et bien net, mains visibles à l'image, garde-les jointes une "
+                             "demi-seconde, avec 1 seconde entre chaque clap.")
         self.status.setWordWrap(True)
         self.bar = QProgressBar()
         self.bar.setRange(0, 1000)
@@ -759,7 +760,7 @@ class MainWindow(QMainWindow):
             self.refresh_later()
 
     def _adjust(self, cid: int) -> None:
-        """Bande d'images : l'utilisateur choisit l'image du contact pour chaque clap."""
+        """Réglage du clap : l'utilisateur choisit l'image du contact pour chaque son de clap."""
         if self.an is None:
             return
         from .ui_clap import ClapFrameDialog
