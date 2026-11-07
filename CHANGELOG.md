@@ -27,6 +27,7 @@ Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), num
   arrivait encore à l'ancien lecteur).
 - Plus de fil de travail détruit avant sa fin (« QThread: Destroyed while thread is still
   running ») à la fin d'un repérage, d'un export, d'une normalisation ou à la fermeture.
+- Montage : « Repartir de zéro » pendant la lecture ne provoque plus d'erreur.
 - Boutons des questions en français (Oui / Non au lieu de Yes / No), ainsi que les fenêtres
   standard de Qt.
 - Journal : une erreur n'est plus écrite deux fois ; alerte de police de Qt sans effet ignorée.

@@ -228,6 +228,7 @@ class MontagePage(QWidget):
         self.last_out: Path | None = None
         self.pauses: list[tuple[int, M.Pause]] = []
         self._ignored: list[tuple[int, float, float]] = []
+        self._forgotten = False                  # montage oublié : ne pas le réenregistrer en fermant
         self._thumbs: dict[int, M.KeyThumbs] = {}
 
         self.v = QVBoxLayout(self)
@@ -544,7 +545,7 @@ class MontagePage(QWidget):
             return
         first = self.srcs[0].path
         M.forget_project(first)
-        self.editor.segments = []                 # rien à réenregistrer en fermant
+        self._forgotten = True                    # rien à réenregistrer en fermant
         self._open([first], None)
 
     # --- enregistrement automatique ----------------------------------------------------------
@@ -554,6 +555,9 @@ class MontagePage(QWidget):
         self._save_timer.start()
 
     def save(self) -> None:
+        if self._forgotten:                       # « Repartir de zéro » : l'ancien montage est oublié
+            self._forgotten = False
+            return
         if self.editor is None or not self.srcs or not self.editor.segments:
             return
         state = self.editor.state()
