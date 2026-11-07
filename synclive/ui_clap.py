@@ -1,12 +1,15 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Réglage manuel de l'image du clap : lecteur (timeline, ×1, ×1/2, ×1/4) et bande d'images autour
-du clap ; on choisit l'image où les mains se touchent (ou où le flash apparaît). Le décalage devient son du clap − instant de
-cette image, à ± ½ image près."""
+"""Réglage manuel de l'image du clap, sur tout le rush de la source : une timeline qui montre tout le
+plan avec ses sons de clap, lecteur (×1, ×1/2, ×1/4) et bande d'images ; on choisit l'image où les
+mains se touchent (ou où le flash apparaît). Le décalage devient son du clap − instant de cette
+image, à ± ½ image près. Un son qui n'est pas un clap s'écarte, un clap pas entendu s'ajoute."""
 from __future__ import annotations
+
+import threading
 
 import cv2
 import numpy as np
-from PySide6.QtCore import QElapsedTimer, QRectF, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QImage, QKeySequence, QPainter, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QHBoxLayout, QLabel, QPushButton, QSizePolicy,
@@ -14,15 +17,20 @@ from PySide6.QtWidgets import (
 )
 
 from . import analysis, export, media
-from .ui_audio import AudioPlayer, Timeline
+from .ui_audio import Timeline
 from .shots import DUP_DIFF
 
 STRIP = 9            # images visibles dans la bande (par défaut)
 STRIPS = (9, 15, 21)
-HALF_SPAN = 1.0      # s chargées de part et d'autre du centre (par défaut)
-SPANS = (1.0, 2.0, 4.0)
+HALF_SPAN = 0.6      # s d'images chargées de part et d'autre de la tête (assez pour 21 vignettes à 60 i/s)
+LOAD_W = 960         # largeur des images chargées (assez pour juger le contact, rapide à lire)
 PREVIEW_W = 760
 THUMB_W = 132
+
+
+def _fmt(t: float) -> str:
+    m, sec = divmod(max(0.0, t), 60.0)
+    return f"{int(m)}:{sec:04.1f}".replace(".", ",")
 
 
 def _qpix(img: np.ndarray, width: int) -> QPixmap:
@@ -179,39 +187,68 @@ def hand_box(locator, frames: list[np.ndarray], k: int, reach: int = 4) -> tuple
 
 
 class ClapFrameDialog(QDialog):
-    """Une source : chaque clap a sa timeline et sa bande d'images. Le résultat est `self.chosen`
-    {id du clap: instant choisi ou None pour revenir à l'automatique}.
+    """Une source, tout son rush : la timeline montre le plan entier avec ses sons de clap ; les
+    images sont chargées autour de la tête (bande, flèches, lecture). Pour chaque son de clap on choisit l'image du contact ;
+    un son qui n'est pas un clap (bruit de micro) s'écarte.
 
-    `self.cur` est l'image affichée. Hors lecture et hors glisser, c'est l'image choisie : clic
-    ou relâchement sur la timeline, clic dans la bande, flèches ← →, pause."""
+    Résultats : `self.chosen` {id du clap: instant choisi ou None pour l'automatique},
+    `exclusions()`. `self.cur` est l'image affichée dans la fenêtre chargée ; hors
+    lecture et hors glisser, c'est l'image choisie."""
 
     def __init__(self, an: analysis.Analysis, cam: analysis.CameraResult, parent=None):
         super().__init__(parent)
         self.an, self.cam = an, cam
         self.fps = an.info.fps_float
         self.setWindowTitle(f"Régler l'image du clap — {export.display_name(cam)}")
-        self.claps = [c for c in cam.claps]
+        self.claps = sorted(cam.claps, key=lambda c: c.t_audio)
         self.chosen: dict[int, float | None] = {c.id: c.manual_t for c in self.claps}
+        self.excluded: dict[int, bool] = {c.id: c.excluded for c in self.claps}
         self.last_changed: int | None = None     # clap réglé en dernier (image montrée sur la carte)
-        self._cache: dict[int, tuple[list[float], list[np.ndarray], list[bool]]] = {}
-        self._boxes: dict[int, tuple[int, int, int, int] | None] = {}
-        self._series: dict[int, list[int]] = {}
+        self.shots = sorted(cam.shots, key=lambda i: an.shots[i].start)
+        self.shot = self.shots[0] if self.shots else 0
+        self._win: tuple[int, float, float] | None = None   # fenêtre de détail chargée
+        self._cache: dict[tuple, tuple[list[float], list[np.ndarray], list[bool]]] = {}
+        self._snd: dict[tuple, tuple[np.ndarray, int, float]] = {}
+        self._boxes: dict[tuple, tuple[int, int, int, int] | None] = {}
+        self._series: dict[tuple, list[int]] = {}
+        self._peaks: dict[int, np.ndarray] = {}
+        self._peak_threads: dict[int, threading.Thread] = {}
+        self._closing = False
+        self._scrubber = None
+        self._loader: threading.Thread | None = None
+        self._load_cv = threading.Condition()
+        self._load_queue: list = []
+        self._wanted: tuple | None = None         # passage attendu en fond, et l'instant à montrer
+        self._view_shot: int | None = None        # plan dont la vue de départ est faite
+        self._loading = None                      # passage en cours de lecture dans le fil
         self._auto_k: int | None = None
         self._locator = None
         self._slots: list[int] = []
         self._notice = ""
         self._switching = False
-        self._audio = AudioPlayer()
-        self._snd: dict[int, tuple[np.ndarray, int, float]] = {}
         self._playing = False
-        self.cur = 0          # index de l'image affichée dans la séquence chargée
+        self.player = None                        # lecteur vidéo de Qt (créé à la 1re lecture)
+        self.audio = None
+        self._QMP = None
+        self._t_start = 0.0
+        self._play_from: float | None = None
+        self._play_t: float | None = None
+        self.cur = 0          # index de l'image affichée dans la fenêtre chargée
 
         v = QVBoxLayout(self)
         top = QHBoxLayout()
+        self.shot_lbl = QLabel("Plan :")
+        top.addWidget(self.shot_lbl)
+        self.shot_box = NoWheelComboBox()
+        for k, i in enumerate(self.shots):
+            s = an.shots[i]
+            self.shot_box.addItem(f"Plan {k + 1} : {_fmt(s.start)} → {_fmt(s.end)}", i)
+        self.shot_box.currentIndexChanged.connect(lambda _i: self._shot_changed())
+        top.addWidget(self.shot_box)
+        self.shot_lbl.setVisible(len(self.shots) > 1)
+        self.shot_box.setVisible(len(self.shots) > 1)
         top.addWidget(QLabel("Clap :"))
         self.clap_box = NoWheelComboBox()
-        for c in self.claps:
-            self.clap_box.addItem(self._clap_label(c), c.id)
         self.clap_box.currentIndexChanged.connect(lambda _i: self._clap_changed())
         top.addWidget(self.clap_box, 1)
         self.zoom = QCheckBox("Zoom sur les mains")
@@ -227,9 +264,9 @@ class ClapFrameDialog(QDialog):
         self._hide = bool(cam.source_fps)
         v.addLayout(top)
 
-        help_ = QLabel("Choisis l'image où les mains se touchent (ou où le flash apparaît) : clique ou glisse "
-                       "sur la timeline (l'image où tu relâches est choisie), clique une vignette ou utilise "
-                       "← →. ▶ / Espace : lecture avec le son, l'image où tu mets pause est choisie.")
+        help_ = QLabel("La timeline montre les sons de clap détectés (orange). Clic ou glisser : y aller · molette : "
+                       "zoom (« Tout le plan » pour tout voir) · Espace : lecture · ■ : début · ← → : image par image. "
+                       "Rien n'est choisi tant que tu ne cliques pas « Cette image est le clap » (Entrée).")
         help_.setWordWrap(True)
         help_.setStyleSheet("color:#8A8780;")
         v.addWidget(help_)
@@ -244,18 +281,27 @@ class ClapFrameDialog(QDialog):
         self.play_btn = QPushButton("▶")
         self.play_btn.setObjectName("play")
         self.play_btn.setFixedSize(46, 46)
-        self.play_btn.setToolTip("Lecture avec le son / pause (Espace). L'image où tu mets pause est choisie.")
+        self.play_btn.setToolTip("Lecture avec le son / pause (Espace)")
         self.play_btn.setStyleSheet(
             "QPushButton#play { background:#FF5A1F; color:#16161A; border:none; border-radius:23px;"
             " font-size:18px; font-weight:700; padding:0; }"
             "QPushButton#play:hover { background:#FF7240; }")
         self.play_btn.clicked.connect(self._toggle_play)
         player.addWidget(self.play_btn, 0, Qt.AlignVCenter)
+        self.stop_btn = QPushButton("■")
+        self.stop_btn.setObjectName("stop")
+        self.stop_btn.setFixedSize(40, 40)
+        self.stop_btn.setToolTip("Stop : retour au début du plan (touche Début)")
+        self.stop_btn.setStyleSheet(
+            "QPushButton#stop { background:#2E2E35; color:#E6E6E6; border:none; border-radius:20px;"
+            " font-size:15px; padding:0; } QPushButton#stop:hover { background:#3A3A42; }")
+        self.stop_btn.clicked.connect(self._stop)
+        player.addWidget(self.stop_btn, 0, Qt.AlignVCenter)
         # une seule timeline : le son, les sons de clap détectés, l'image choisie, la tête de lecture
         self.timeline = Timeline()
         self.timeline.scrub.connect(self._scrub)
         self.timeline.released.connect(self._choose_time)
-        self.timeline.step.connect(self._step)
+        self.timeline.zoomed.connect(lambda _z: QTimer.singleShot(0, self._sync_unzoom))
         player.addWidget(self.timeline, 1)
         side = QVBoxLayout()
         side.setSpacing(6)
@@ -264,6 +310,11 @@ class ClapFrameDialog(QDialog):
         self.time_lbl.setFixedWidth(118)
         self.time_lbl.setStyleSheet("font-size:16px; font-weight:600; font-family:Consolas, 'Segoe UI';")
         side.addWidget(self.time_lbl)
+        self.unzoom_btn = QPushButton("Tout le plan")
+        self.unzoom_btn.setToolTip("Voir tout le plan (double-clic sur la timeline)")
+        self.unzoom_btn.clicked.connect(self.timeline.reset_zoom)
+        self.unzoom_btn.setVisible(False)
+        side.addWidget(self.unzoom_btn)
         seg = QHBoxLayout()
         seg.setSpacing(0)
         self._speed = 1.0
@@ -287,11 +338,12 @@ class ClapFrameDialog(QDialog):
         side.addLayout(seg)
         player.addLayout(side)
         v.addLayout(player)
-        self._timer = QTimer(self)
-        self._timer.setInterval(10)
-        self._timer.timeout.connect(self._play_tick)
-        self._clock = QElapsedTimer()
-        self._play_t0 = 0.0
+        self._load_timer = QTimer(self)              # passage chargé en fond : prise de relais
+        self._load_timer.setInterval(20)
+        self._load_timer.timeout.connect(self._load_tick)
+        self._peak_timer = QTimer(self)              # aperçu du son du plan, rempli en tâche de fond
+        self._peak_timer.setInterval(150)
+        self._peak_timer.timeout.connect(self._peaks_tick)
 
         self.info = QLabel()
         self.info.setAlignment(Qt.AlignCenter)
@@ -320,6 +372,24 @@ class ClapFrameDialog(QDialog):
         strip.addWidget(self.next_btn)
         v.addLayout(strip)
 
+        acts = QHBoxLayout()
+        self.pick_btn = QPushButton("Cette image est le clap")
+        self.pick_btn.setObjectName("primary")
+        self.pick_btn.setAutoDefault(False)
+        self.pick_btn.setToolTip("L'image affichée est celle où les mains se touchent (Entrée)")
+        self.pick_btn.clicked.connect(self._pick_current)
+        acts.addWidget(self.pick_btn)
+        acts.addSpacing(12)
+        self.excl_btn = QPushButton("Ce son n'est pas un clap")
+        self.excl_btn.setToolTip("Bruit de micro, choc, voix… : ce son ne compte plus pour la mesure")
+        self.excl_btn.clicked.connect(self._toggle_excluded)
+        acts.addWidget(self.excl_btn)
+        acts.addStretch(1)
+        self.auto_btn = QPushButton("Revenir à l'automatique pour ce clap")
+        self.auto_btn.clicked.connect(self._reset_auto)
+        acts.addWidget(self.auto_btn)
+        v.addLayout(acts)
+
         opts = QHBoxLayout()
         opts.addWidget(QLabel("Images dans la bande :"))
         self.strip_box = NoWheelComboBox()
@@ -327,17 +397,7 @@ class ClapFrameDialog(QDialog):
             self.strip_box.addItem(str(n), n)
         self.strip_box.currentIndexChanged.connect(lambda _i: self._build_strip())
         opts.addWidget(self.strip_box)
-        opts.addSpacing(16)
-        opts.addWidget(QLabel("Durée chargée :"))
-        self.span_box = NoWheelComboBox()
-        for sp in SPANS:
-            self.span_box.addItem(f"± {sp:g} s autour du son", sp)
-        self.span_box.currentIndexChanged.connect(lambda _i: self._reload())
-        opts.addWidget(self.span_box)
         opts.addStretch(1)
-        self.auto_btn = QPushButton("Revenir à l'automatique pour ce clap")
-        self.auto_btn.clicked.connect(self._reset_auto)
-        opts.addWidget(self.auto_btn)
         cancel = QPushButton("Annuler")
         cancel.clicked.connect(self.reject)
         ok = QPushButton("Valider")
@@ -352,66 +412,102 @@ class ClapFrameDialog(QDialog):
         QShortcut(QKeySequence(Qt.Key_Left), self, activated=lambda: self._step(-1))
         QShortcut(QKeySequence(Qt.Key_Right), self, activated=lambda: self._step(1))
         QShortcut(QKeySequence(Qt.Key_Space), self, activated=self._toggle_play)
+        QShortcut(QKeySequence(Qt.Key_Home), self, activated=self._stop)
+        QShortcut(QKeySequence(Qt.Key_Return), self, activated=self._pick_current)
+        QShortcut(QKeySequence(Qt.Key_Enter), self, activated=self._pick_current)
         # même clap que l'image de la carte, sinon le premier clap retenu
         shown = analysis.shown_clap(an, cam.image_shot) if cam.image_shot is not None else None
-        first = next((i for i, c in enumerate(self.claps) if c is shown),
-                     next((i for i, c in enumerate(self.claps) if c.selected is not None), 0))
-        self.clap_box.setCurrentIndex(first)
-        if first == 0:
+        first = next((c for c in self.claps if c is shown),
+                     next((c for c in self.claps if c.selected is not None), self.claps[0] if self.claps else None))
+        if first is not None:
+            self.shot = first.shot
+        self._fill_claps(first)
+        self._sync_shot_box()
+        self._load()
+
+    # --- plans et claps ------------------------------------------------------------
+    def _sync_unzoom(self) -> None:
+        """« Tout le plan » visible quand la timeline est zoomée. Différé, et seulement s'il change :
+        l'afficher redimensionne la fenêtre, qui redessine la timeline (pas de boucle)."""
+        if self._closing:
+            return
+        z = self.timeline.zoomed_in()
+        if self.unzoom_btn.isHidden() == z:
+            self.unzoom_btn.setVisible(z)
+
+    def _sync_shot_box(self) -> None:
+        i = self.shot_box.findData(self.shot)
+        if i >= 0 and i != self.shot_box.currentIndex():
+            self.shot_box.blockSignals(True)
+            self.shot_box.setCurrentIndex(i)
+            self.shot_box.blockSignals(False)
+
+    def _shot_claps(self) -> list[analysis.Clap]:
+        return [c for c in self.claps if c.shot == self.shot]
+
+    def _fill_claps(self, select: analysis.Clap | None = None) -> None:
+        """Liste des sons de clap du plan affiché (les écartés y restent, marqués)."""
+        self.clap_box.blockSignals(True)
+        self.clap_box.clear()
+        for c in self._shot_claps():
+            self.clap_box.addItem(self._clap_label(c), c.id)
+        if not self._shot_claps():
+            self.clap_box.addItem("aucun son de clap retenu dans ce plan", None)
+        i = self.clap_box.findData(select.id) if select is not None else -1
+        if i < 0:
+            i = next((k for k, c in enumerate(self._shot_claps()) if not self.excluded.get(c.id)), 0)
+        self.clap_box.setCurrentIndex(i)
+        self.clap_box.blockSignals(False)
+
+    def _select_clap(self, c: analysis.Clap) -> None:
+        """Affiche ce clap (et son plan)."""
+        if c.shot != self.shot:
+            self._pause()
+            self.shot = c.shot
+            self._sync_shot_box()
+            self._fill_claps(c)
             self._load()
+        else:
+            i = self.clap_box.findData(c.id)
+            if i == self.clap_box.currentIndex():
+                self._load()
+            else:
+                self.clap_box.setCurrentIndex(i)
 
-    def fit_to(self, scr) -> None:
-        """Taille d'ouverture : aussi haute que l'écran le permet (88 %), et juste assez large
-        pour la vidéo à cette hauteur (pas toute la largeur d'un écran large), centrée."""
-        frames = self._data()[1]
-        aspect = frames[0].shape[1] / frames[0].shape[0] if frames else 16 / 9
-        h = min(scr.height(), max(700, int(scr.height() * 0.88)))
-        w = 1000
-        for _ in range(3):                      # la bande change un peu de hauteur avec la largeur
-            self.resize(w, h)
-            self.layout().activate()
-            self._show()
-            self.layout().activate()
-            want = int(self.preview.height() * aspect) + 2 * self.layout().contentsMargins().left() + 4
-            w = int(min(max(want, 1000), scr.width() * 0.92))   # petit écran : sa largeur d'abord
-        self.resize(w, h)
-        self.move(scr.center() - self.rect().center())
+    def _clap(self) -> analysis.Clap | None:
+        cid = self.clap_box.currentData()
+        return next((c for c in self.claps if c.id == cid), None) if cid is not None else None
 
-    def _hands(self):
-        if self._locator is None and self.cam.kind == "camera":
-            from .hands import HandLocator
-            self._locator = HandLocator()
-        return self._locator
+    def _relabel(self) -> None:
+        for k in range(self.clap_box.count()):
+            c = next((o for o in self.claps if o.id == self.clap_box.itemData(k)), None)
+            if c is not None:
+                self.clap_box.setItemText(k, self._clap_label(c))
 
-    def resizeEvent(self, e):
-        super().resizeEvent(e)
-        if self._cache:
-            self._show()
-
-    def done(self, r: int) -> None:
-        self._timer.stop()
-        self._audio.close()
-        if self._locator is not None:
-            self._locator.close()
-        super().done(r)
-
-    # --- données ---------------------------------------------------------------
-    def _clap(self) -> analysis.Clap:
-        return self.claps[max(0, self.clap_box.currentIndex())]
+    def _shot_changed(self) -> None:
+        sh = self.shot_box.currentData()
+        if sh is None or sh == self.shot:
+            return
+        self._pause()
+        self.shot = sh
+        self._notice = ""
+        self._fill_claps()
+        self._load()
 
     def _data(self):
-        return self._cache.get(self._clap().id, ([], [], []))
+        return self._cache.get(self._win, ([], [], []))
 
     def _clap_label(self, c: analysis.Clap) -> str:
         t = self.chosen.get(c.id)
+        if self.excluded.get(c.id):
+            return f"son à {c.t_audio:.3f} s — écarté (pas un clap)"
         if t is not None:
             how = f"à la main : {export.fmt_ms(c.t_audio - t)}"
         elif c.selected is not None and c.manual_t is None:
             how = f"auto : {export.fmt_ms(c.offset)}"
         else:
             how = "pas d'image retenue"
-        ex = " · écarté" if c.excluded else ""
-        return f"son à {c.t_audio:.3f} s — {how}{ex}"
+        return f"son à {c.t_audio:.3f} s — {how}"
 
     def _auto_t(self, c: analysis.Clap) -> float | None:
         """Instant automatique (hors choix manuel) : candidat retenu, sinon décalage de la source."""
@@ -443,9 +539,8 @@ class ClapFrameDialog(QDialog):
 
     def _starts(self) -> list[int]:
         """Pour chaque image, l'indice de la première image de sa série de répétitions. Calculé une
-        fois, en avançant : une série ne dure pas plus d'une image réelle de la caméra."""
-        c = self._clap()
-        got = self._series.get(c.id)
+        fois par fenêtre, en avançant : une série ne dure pas plus d'une image réelle de la caméra."""
+        got = self._series.get(self._win)
         if got is not None:
             return got
         times, _f, dups = self._data()
@@ -454,12 +549,12 @@ class ClapFrameDialog(QDialog):
         out, start = [], 0
         for i, dup in enumerate(dups):
             # coupure sur le n° absolu de l'image dans un plan immobile : les séries sont les mêmes
-            # quel que soit le passage chargé (sinon une image change de série d'un clap à l'autre)
+            # quelle que soit la fenêtre chargée (sinon une image change de série d'une fenêtre à l'autre)
             absn = int(round(times[i] * self.fps))
             if not dup or i - start > reach or absn % (reach + 1) == 0:
                 start = i
             out.append(start)
-        self._series[c.id] = out
+        self._series[self._win] = out
         return out
 
     def _t(self, i: int) -> float:
@@ -471,54 +566,330 @@ class ClapFrameDialog(QDialog):
             self._notice = ""
         self._load()
 
+    # --- fenêtre de détail : durée fixe, elle glisse sur le plan ---------------------------
+    def _half(self) -> float:
+        return HALF_SPAN
+
+    def _key_at(self, t: float) -> tuple[int, float, float]:
+        sh = self.an.shots[self.shot]
+        half = self._half()
+        t0 = max(sh.start, min(t - half, sh.end - 2 * half))
+        t1 = min(sh.end, t0 + 2 * half)
+        return (self.shot, round(t0, 4), round(t1, 4))
+
+    def _covers(self, t: float) -> bool:
+        """Les images chargées montrent-elles t (hors des bords, sauf au bord du plan) ?"""
+        if self._win is None:
+            return False
+        sh = self.an.shots[self.shot]
+        s_, a, b = self._win
+        m = 0.15 * (b - a)
+        at_start, at_end = a <= sh.start + 1e-3, b >= sh.end - 1e-3
+        central = a + m <= t <= b - m
+        edge_ok = (t < a + m and at_start) or (t > b - m and at_end)    # bord du plan : rien au-delà
+        return s_ == self.shot and a <= t <= b and (central or edge_ok)
+
+    def _decode_window(self, key, stop=None) -> None:
+        """Lit les images et le son d'un passage (fil de chargement ou, au besoin, tout de suite).
+        `stop()` vrai : abandon (préchargement devenu inutile), rien n'est gardé."""
+        if key in self._cache:
+            return
+        shot, t0, t1 = key
+        sh = self.an.shots[shot]
+        times, frames = media.decode_range(self.an.info.path, t0, t1, sh.shown, max_width=LOAD_W, stop=stop)
+        # répétitions signalées seulement si la source est une caméra lente : dans un décor fixe,
+        # deux images sans mouvement se ressemblent aussi
+        dups = duplicates(frames) if self.cam.source_fps else [False] * len(frames)
+        snd = (np.zeros(0, np.float32), 48000, times[0] if times else t0)
+        if times:
+            try:
+                snd = media.decode_audio_range(self.an.info.path, self.an.settings.audio_track,
+                                               times[0], times[-1] + 1.0 / self.fps)
+            except Exception:
+                pass
+        self._snd[key] = snd
+        self._cache[key] = (times, frames, dups)
+
+    def _loader_run(self) -> None:
+        """Fil de chargement : le passage demandé en dernier d'abord, puis les voisins (préchargés)."""
+        while not self._closing:
+            with self._load_cv:
+                while not self._load_queue and not self._closing:
+                    self._load_cv.wait(0.5)
+                if self._closing:
+                    return
+                key = self._load_queue.pop(0)
+                self._loading = key
+            try:
+                # un préchargement s'arrête dès qu'un passage demandé par un clic attend
+                wanted = lambda k=key: self._closing or (self._wanted is not None and self._wanted[0] != k)  # noqa: E731
+                self._decode_window(key, stop=wanted)
+            except Exception:
+                pass
+            finally:
+                self._loading = None
+
+    def _request(self, keys: list) -> None:
+        with self._load_cv:
+            for k in reversed(keys):
+                if k in self._load_queue:
+                    self._load_queue.remove(k)
+                if k not in self._cache:
+                    self._load_queue.insert(0, k)
+            del self._load_queue[6:]
+            self._load_cv.notify()
+        if self._loader is None:
+            self._loader = threading.Thread(target=self._loader_run, daemon=True)
+            self._loader.start()
+
+    def _prefetch(self) -> None:
+        """Passages juste avant et juste après : flèches et lecture enchaînent sans attendre."""
+        if self._win is None:
+            return
+        _s, a, b = self._win
+        sh = self.an.shots[self.shot]
+        keys = [self._key_at(b + self._half() - 0.1)] if b < sh.end - 1e-3 else []
+        if a > sh.start + 1e-3:
+            keys.append(self._key_at(a - self._half() + 0.1))
+        self._request([k for k in keys if k != self._win])
+
+    def _use(self, key) -> None:
+        self._win = key
+        for old in [k for k in list(self._cache) if k != key][:-5]:     # 6 passages gardés au plus
+            self._cache.pop(old, None)
+            self._snd.pop(old, None)
+            self._series.pop(old, None)
+        self._set_timeline()
+        self._prefetch()
+
+    def _ensure(self, t: float, force: bool = False) -> bool:
+        """Images chargées autour de l'instant t (bande, flèches, lecture ; la timeline montre
+        toujours tout le plan). Tout de suite (on attend la lecture si besoin). Vrai si les images
+        chargées ont changé."""
+        self._wanted = None
+        if not force and self._covers(t):
+            return False
+        key = self._key_at(t)
+        if key == self._win:
+            return False
+        if key not in self._cache:
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            try:
+                self._decode_window(key)
+            finally:
+                QApplication.restoreOverrideCursor()
+        self._use(key)
+        return True
+
+    def _go_soon(self, t: float) -> None:
+        """Aller à t SANS attendre : l'image est montrée tout de suite (aperçu rapide), les images
+        autour se chargent en fond et prennent le relais dès qu'elles sont là."""
+        self._pause()
+        self._to_shot_of(t)
+        if self._covers(t):
+            self._wanted = None
+            times = self._data()[0]
+            self.cur = self._first_of_series(self._index_at(times, t))
+            self._show()
+            return
+        key = self._key_at(t)
+        if key in self._cache:
+            self._wanted = None
+            self._use(key)
+            self.cur = self._first_of_series(self._index_at(self._data()[0], t))
+            self._show()
+            return
+        self._wanted = (key, t)
+        self._request([key])
+        self.timeline.set_marks(t, self.timeline.chosen)
+        self.time_lbl.setText(f"{t:.3f} s")
+        self._fast(t)
+        self._load_timer.start()
+
+    def _load_tick(self) -> None:
+        if self._wanted is None:
+            self._load_timer.stop()
+            return
+        key, t = self._wanted
+        if key in self._cache and key in self._snd:
+            self._wanted = None
+            self._load_timer.stop()
+            self._use(key)
+            times = self._data()[0]
+            if times:
+                self.cur = self._first_of_series(self._index_at(times, t))
+            self._show()
+
+    def _settle(self) -> None:
+        """Un passage est attendu en fond : on l'attend ici (geste qui a besoin des images)."""
+        if self._wanted is not None:
+            key, t = self._wanted
+            self._ensure(t)
+            times = self._data()[0]
+            if times:
+                self.cur = self._first_of_series(self._index_at(times, t))
+
+    def _set_timeline(self) -> None:
+        times = self._data()[0]
+        if not times:
+            return
+        c = self._clap()
+        sh = self.an.shots[self.shot]
+        marks = [(o.t_audio, o is c) for o in self._shot_claps() if not self.excluded.get(o.id) or o is c]
+        self.timeline.peaks = self._peaks.get(self.shot)
+        self.timeline.set_data(np.zeros(0, np.float32), 48000, sh.start, sh.start, sh.end, marks)
+        if self._view_shot != self.shot:
+            self._view_shot = self.shot
+            self._default_view()
+        self._auto_k = None
+        if c is not None:
+            a_img = self._auto_img(c)
+            if a_img is not None and times[0] <= a_img <= times[-1]:
+                self._auto_k = self._first_of_series(self._index_near(times, a_img))
+
+    def _default_view(self) -> None:
+        """Vue de départ d'un plan : la zone de ses sons de clap détectés (1 s de marge), pas les
+        longs passages sans clap ; tout le plan s'il n'y en a aucun (il faut chercher partout)."""
+        sh = self.an.shots[self.shot]
+        ts = [o.t_audio for o in self._shot_claps() if not self.excluded.get(o.id)]
+        if not ts:
+            self.timeline.reset_zoom()
+            return
+        a, b = min(ts) - 1.0, max(ts) + 1.0
+        if b - a < 3.0:
+            mid = (a + b) / 2
+            a, b = mid - 1.5, mid + 1.5
+        if a <= sh.start + 0.5 and b >= sh.end - 0.5:
+            self.timeline.reset_zoom()
+        else:
+            self.timeline.zoom_to(max(sh.start, a), min(sh.end, b))
+
+    def _auto_img(self, c: analysis.Clap) -> float | None:
+        """Image automatique : exactement celle de la carte (juste après le contact)."""
+        a = self._auto_t(c)
+        if a is not None and c.selected is not None and c.manual_t is None:
+            return analysis.clap_image_t(self.an, c)
+        if a is not None:
+            return a + (0.0 if self.cam.kind == "mire" else 1.5 / self.fps)
+        return None
+
+    def _rest_t(self) -> float:
+        """Instant montré à l'arrêt : l'image choisie, sinon l'automatique, sinon face au son ;
+        sans clap, le début du plan."""
+        c = self._clap()
+        sh = self.an.shots[self.shot]
+        if c is None:
+            times = self._data()[0]
+            return times[self.cur] if times and self._win and self._win[0] == self.shot else sh.start
+        target = self.chosen.get(c.id)
+        if target is not None:
+            return target
+        a = self._auto_img(c)
+        if a is not None:
+            return a
+        return min(max(c.t_audio - (self.cam.offset or 0.0), sh.start), sh.end)
+
     def _load(self) -> None:
         self._pause()
         c = self._clap()
-        if c.id not in self._cache:
-            QApplication.setOverrideCursor(Qt.WaitCursor)
-            try:
-                center = c.t_audio - (self.cam.offset or 0.0)
-                shot = self.an.shots[c.shot]
-                span = float(self.span_box.currentData() or HALF_SPAN)
-                t0 = max(shot.start, center - span)
-                t1 = min(shot.end, center + span)
-                # plus la durée chargée est longue, plus les images sont réduites (mémoire)
-                width = {1.0: 1280, 2.0: 960}.get(span, 720)
-                times, frames = media.decode_range(self.an.info.path, t0, t1, shot.region, max_width=width)
-            finally:
-                QApplication.restoreOverrideCursor()
-            # répétitions signalées seulement si la source est une caméra lente : dans un décor
-            # fixe, deux images sans mouvement se ressemblent aussi
-            dups = duplicates(frames) if self.cam.source_fps else [False] * len(frames)
-            self._cache[c.id] = (times, frames, dups)
-            if times:
-                try:
-                    self._snd[c.id] = media.decode_audio_range(
-                        self.an.info.path, self.an.settings.audio_track, times[0], times[-1] + 1.0 / self.fps)
-                except Exception:
-                    self._snd[c.id] = (np.zeros(0, np.float32), 48000, times[0])
-        times = self._cache[c.id][0]
-        if times:
-            sig, rate, t_sig = self._snd.get(c.id, (np.zeros(0, np.float32), 48000, times[0]))
-            in_range = [(o.t_audio, o is c) for o in self.an.claps
-                        if times[0] <= o.t_audio <= times[-1] and not o.method.startswith("mire") or o is c]
-            self.timeline.set_data(sig, rate, t_sig, times[0], times[-1], in_range,
-                                   frames=[times[i] for i in self._visible()], ref=c.t_audio)
-        if not times:
-            self.cur = 0
-            self._show()
-            return
-        # image automatique : exactement celle de la carte (juste après le contact)
-        a = self._auto_t(c)
-        if a is not None and c.selected is not None and c.manual_t is None:
-            a_img = analysis.clap_image_t(self.an, c)
-        elif a is not None:
-            a_img = a + (0.0 if self.cam.kind == "mire" else 1.5 / self.fps)
-        else:
-            a_img = None
-        self._auto_k = None if a_img is None else self._first_of_series(self._index_near(times, a_img))
-        self.cur = self._rest_index()
+        if c is not None and c.shot != self.shot:
+            self.shot = c.shot
+            self._sync_shot_box()
+        self._start_peaks(self.shot)
+        t = self._rest_t()
+        if not self._ensure(t):
+            self._set_timeline()
+        times = self._data()[0]
+        self.cur = self._first_of_series(self._index_at(times, t)) if times else 0
+        self._update_buttons()
         self._show()
+
+    # --- aperçu du son du plan entier ---------------------------------------------------
+    def _start_peaks(self, shot: int) -> None:
+        if shot in self._peaks:
+            return
+        sh = self.an.shots[shot]
+        n = 12000                                   # assez fin pour zoomer sur une zone du plan
+        arr = np.zeros(n, np.float32)
+        self._peaks[shot] = arr
+        th = threading.Thread(target=media.audio_peaks, daemon=True,
+                              args=(self.an.info.path, self.an.settings.audio_track, sh.start, sh.end, n),
+                              kwargs={"stop": lambda: self._closing, "out": arr})
+        self._peak_threads[shot] = th
+        th.start()
+        self._peak_timer.start()
+
+    def _peaks_tick(self) -> None:
+        self.timeline._env = None                   # le son du plan se remplit : on le redessine
+        self.timeline.update()
+        if not any(t.is_alive() for t in self._peak_threads.values()):
+            self._peak_timer.stop()
+
+    def _to_shot_of(self, t: float) -> None:
+        """Instant d'un autre plan de la source : on passe sur ce plan (liste des claps comprise)."""
+        sh = self.an.shots[self.shot]
+        if sh.start - 1e-6 <= t <= sh.end + 1e-6:
+            return
+        other = next((i for i in self.shots if self.an.shots[i].start - 1e-6 <= t <= self.an.shots[i].end + 1e-6), None)
+        if other is None:
+            return
+        self.shot = other
+        self._sync_shot_box()
+        self._fill_claps()
+        self._update_buttons()
+
+    def _goto(self, t: float) -> None:
+        """Va à l'instant t (du plan qui le contient), sans rien choisir, en attendant les images."""
+        self._pause()
+        self._to_shot_of(t)
+        self._ensure(t)
+        times = self._data()[0]
+        if times:
+            self.cur = self._first_of_series(self._index_at(times, t))
+            self._show()
+
+    # --- dimensions --------------------------------------------------------------------
+    def fit_to(self, scr) -> None:
+        """Taille d'ouverture : aussi haute que l'écran le permet (88 %), et juste assez large
+        pour la vidéo à cette hauteur (pas toute la largeur d'un écran large), centrée."""
+        frames = self._data()[1]
+        aspect = frames[0].shape[1] / frames[0].shape[0] if frames else 16 / 9
+        h = min(scr.height(), max(700, int(scr.height() * 0.88)))
+        w = 1000
+        for _ in range(3):                      # la bande change un peu de hauteur avec la largeur
+            self.resize(w, h)
+            self.layout().activate()
+            self._show()
+            self.layout().activate()
+            want = int(self.preview.height() * aspect) + 2 * self.layout().contentsMargins().left() + 4
+            w = int(min(max(want, 1000), scr.width() * 0.92))   # petit écran : sa largeur d'abord
+        self.resize(w, h)
+        self.move(scr.center() - self.rect().center())
+
+    def _hands(self):
+        if self._locator is None and self.cam.kind == "camera":
+            from .hands import HandLocator
+            self._locator = HandLocator()
+        return self._locator
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        if self._cache and self._wanted is None:   # images attendues : on garde l'aperçu de l'endroit cliqué
+            self._show()
+
+    def done(self, r: int) -> None:
+        self._closing = True
+        with self._load_cv:
+            self._load_cv.notify_all()
+        self._load_timer.stop()
+        if self.player is not None:
+            self.player.stop()
+        if self._scrubber is not None:
+            self._scrubber.stop()
+        self._peak_timer.stop()
+        if self._locator is not None:
+            self._locator.close()
+        super().done(r)
 
     # --- affichage ---------------------------------------------------------------
     def _box(self):
@@ -526,15 +897,16 @@ class ClapFrameDialog(QDialog):
             return None
         c = self._clap()
         times, frames, _d = self._data()
-        if c.id not in self._boxes and frames:
+        key = (c.id if c is not None else None, self._win)
+        if key not in self._boxes and frames:
             ref = self._auto_k if self._auto_k is not None and not self.cam.ambiguous else self.cur
             # mains au moment du contact seulement : pendant l'élan elles traversent l'image
             hb = hand_box(self._hands(), frames, ref)
-            self._boxes[c.id] = hb or motion_box(frames, max(0, ref - 6), min(len(frames) - 1, ref + 2))
-        return self._boxes.get(c.id)
+            self._boxes[key] = hb or motion_box(frames, max(0, ref - 6), min(len(frames) - 1, ref + 2))
+        return self._boxes.get(key)
 
     def _show_frame(self) -> None:
-        """Grande image, timeline et ligne d'info pour l'image affichée (rapide : lecture)."""
+        """Grande image, timeline, barre du plan et ligne d'info pour l'image affichée (rapide)."""
         c = self._clap()
         times, frames, _d = self._data()
         if not frames:
@@ -544,17 +916,23 @@ class ClapFrameDialog(QDialog):
         self.preview.set_frame(big)
         tk = self._t(k)
         self.time_lbl.setText(f"{tk:.3f} s")
-        self.timeline.set_marks(times[k], self.chosen.get(c.id))
+        self.timeline.set_marks(times[k], self.chosen.get(c.id) if c is not None else None)
+        if c is None:
+            txt = (f"image affichée : {tk:.3f} s · aucun son de clap retenu dans ce plan.\n"
+                   "Choisis un autre plan, ou une autre source.")
+            if self._notice:
+                txt += f"\n{self._notice}"
+            self.info.setText("\n".join(txt.split("\n")[:4]))
+            return
         chosen = self.chosen.get(c.id)
         is_chosen = chosen is not None and abs(chosen - tk) < 0.25 / self.fps
         tag = "image choisie" if is_chosen else "image affichée"
-        txt = f"{tag} : {tk:.3f} s · son du clap : {c.t_audio:.3f} s  →  {self._verdict(c.t_audio - tk)}"
+        if self.excluded.get(c.id):
+            txt = f"{tag} : {tk:.3f} s · le son de {c.t_audio:.3f} s est écarté (pas un clap)"
+        else:
+            txt = f"{tag} : {tk:.3f} s · son du clap : {c.t_audio:.3f} s  →  {self._verdict(c.t_audio - tk)}"
         if chosen is not None and not is_chosen:
             txt += f"\n(image choisie pour ce clap : {chosen:.3f} s, {export.fmt_ms(c.t_audio - chosen)})"
-        other = self._pair(c, tk)
-        if not is_chosen and other is not c:
-            txt += (f"\n(cette image ira avec le son de clap de {other.t_audio:.3f} s, plus proche : "
-                    f"{self._verdict(other.t_audio - tk)})")
         if self._notice:
             txt += f"\n{self._notice}"
         a = self._auto_t(c)
@@ -567,7 +945,7 @@ class ClapFrameDialog(QDialog):
         c = self._clap()
         times, frames, dups = self._data()
         if not frames:
-            self.preview.set_message("Images introuvables autour de ce clap.")
+            self.preview.set_message("Images introuvables dans ce plan.")
             self.info.setText("")
             for b in self.thumbs:
                 b.setVisible(False)
@@ -584,7 +962,7 @@ class ClapFrameDialog(QDialog):
             # taille fixe (image + 2 lignes) : un libellé plus long ne déplace ni la bande ni la vidéo
             b.setIconSize(QSize(tw, ih))
             b.setFixedSize(tw + 12, ih + 2 * line + 16)
-        chosen = self.chosen.get(c.id)
+        chosen = self.chosen.get(c.id) if c is not None else None
         vis = self._visible()
         ks = self._first_of_series(k)     # image affichée = sa vraie image (pas une copie)
         self._slots = self._window(vis, ks)
@@ -596,23 +974,25 @@ class ClapFrameDialog(QDialog):
             b.setVisible(True)
             img = self._img(frames[i], box)
             b.setIcon(_qpix(img, tw))
-            marks = []
             ti = self._t(i)
+            if c is None:
+                b.setText(f"{ti:.2f} s".replace(".", ",") + "\n")
+                b.setStyleSheet("QToolButton { border: 3px solid %s; border-radius: 4px; padding: 2px; }"
+                                % ("#FF5A1F" if i == ks else "transparent"))
+                continue
+            marks = []
             is_chosen = chosen is not None and abs(chosen - ti) < 0.25 / self.fps
-            # l'image choisie appartient à ce clap : sa valeur est celle de ce son
-            pair = c if is_chosen else self._pair(c, ti)
             if is_chosen:
                 marks.append("choisie")
             if i == self._auto_k:
                 marks.append("auto")
-            if pair is not c:
-                marks.insert(0, f"son {pair.t_audio:.2f}".replace(".", ","))
-            # valeur obtenue si on clique cette vignette (avec le son auquel elle sera rattachée)
-            b.setText(f"{export.fmt_ms(pair.t_audio - ti)}" + (f"\n{' · '.join(marks)}" if marks else "\n"))
+            # valeur obtenue si cette image devient l'image du clap sélectionné
+            b.setText(f"{export.fmt_ms(c.t_audio - ti)}" + (f"\n{' · '.join(marks)}" if marks else "\n"))
             color = "#FF5A1F" if i == ks else ("#3FB950" if "choisie" in marks else "transparent")
             b.setStyleSheet("QToolButton { border: 3px solid %s; border-radius: 4px; padding: 2px; }" % color)
-        self.prev_btn.setEnabled(bool(vis) and ks > vis[0])
-        self.next_btn.setEnabled(bool(vis) and ks < vis[-1])
+        sh = self.an.shots[self.shot]
+        self.prev_btn.setEnabled(bool(vis) and (ks > vis[0] or times[0] > sh.start + 1e-3))
+        self.next_btn.setEnabled(bool(vis) and (ks < vis[-1] or times[-1] < sh.end - 1.5 / self.fps))
 
     def _img(self, img: np.ndarray, box) -> np.ndarray:
         if box is not None:
@@ -653,14 +1033,6 @@ class ClapFrameDialog(QDialog):
         if show and self._cache:
             self._show()
 
-    def _reload(self) -> None:
-        """Nouvelle durée chargée autour du son : on relit les images (le choix est gardé)."""
-        self._cache.clear()
-        self._snd.clear()
-        self._boxes.clear()
-        self._series.clear()
-        self._load()
-
     def _verdict(self, off: float) -> str:
         ms = round(off * 1000)
         if ms == 0:
@@ -668,94 +1040,191 @@ class ClapFrameDialog(QDialog):
         who = "IMAGE EN RETARD" if off < 0 else "SON EN RETARD"
         return f"{who} de {export.both(off, self.fps)}"
 
+    def _update_buttons(self) -> None:
+        c = self._clap()
+        self.excl_btn.setEnabled(c is not None)
+        self.pick_btn.setEnabled(c is not None and not self.excluded.get(c.id))
+        self.excl_btn.setText("Remettre ce son" if c is not None and self.excluded.get(c.id)
+                              else "Ce son n'est pas un clap")
+        self.auto_btn.setEnabled(c is not None)
+
     # --- lecteur -------------------------------------------------------------------
     def _scrub(self, t: float) -> None:
-        """Appui ou glisser sur la timeline : l'image suit (elle est choisie au relâchement)."""
+        """Appui ou glisser sur la timeline : l'image suit (elle est choisie au relâchement). Hors
+        des images chargées, un aperçu rapide (image clé puis image exacte) la montre aussitôt."""
         self._pause()
         times = self._data()[0]
-        if times:
+        if times and times[0] <= t <= times[-1] + 1.0 / self.fps:
             self.cur = self._index_at(times, t)
             self._show_frame()
+            return
+        self.timeline.set_marks(t, self.timeline.chosen)
+        self.time_lbl.setText(f"{t:.3f} s")
+        self._fast(t)
+
+    def _fast(self, t: float) -> None:
+        if self._scrubber is None:
+            from .ui_edit import ScrubDecoder         # (import ici : ui_edit importe ce module)
+            self._scrubber = ScrubDecoder(self.an.info.path)
+            self._scrubber.frame.connect(self._on_fast)
+            self._scrubber.start()
+        self._scrubber.request(t)
+
+    def _on_fast(self, _ft: float, img, _exact: bool) -> None:
+        if self._closing or not (self.timeline.dragging or self._wanted is not None):
+            return
+        x0, y0, x1, y1 = self.an.shots[self.shot].shown
+        if (x0, y0, x1, y1) != (0.0, 0.0, 1.0, 1.0):
+            h, w = img.shape[:2]
+            img = img[int(y0 * h):int(y1 * h), int(x0 * w):int(x1 * w)]
+        self.preview.set_frame(self._img(np.ascontiguousarray(img), None))
 
     def _choose_time(self, t: float) -> None:
-        times = self._data()[0]
-        if times:
-            self._choose(self._index_at(times, t))
+        """Relâchement sur la timeline : on reste sur cette image (rien n'est choisi), tout de suite."""
+        self._go_soon(t)
+
+    # --- lecture : le lecteur vidéo de Qt (image et son décodés en continu, fluide) ----------
+    def _ensure_player(self) -> None:
+        if self.player is not None:
+            return
+        import av
+        from PySide6.QtCore import QUrl
+        from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer, QVideoSink
+        try:
+            with av.open(self.an.info.path) as c:          # le lecteur compte depuis le début du flux
+                self._t_start = c.start_time / 1_000_000 if c.start_time is not None else 0.0
+        except Exception:
+            self._t_start = 0.0
+        self.player = QMediaPlayer(self)
+        self.audio = QAudioOutput(self)
+        self.player.setAudioOutput(self.audio)
+        self.sink = QVideoSink(self)
+        self.player.setVideoSink(self.sink)
+        self.sink.videoFrameChanged.connect(self._on_play_frame)
+        self._QMP = QMediaPlayer
+        self.player.mediaStatusChanged.connect(self._on_media)
+        self.player.setSource(QUrl.fromLocalFile(self.an.info.path))
+
+    def _on_media(self, status) -> None:
+        QMP = self._QMP
+        if status in (QMP.LoadedMedia, QMP.BufferedMedia):
+            tr = int(self.an.settings.audio_track or 0)
+            if tr and self.player.activeAudioTrack() != tr:
+                try:
+                    self.player.setActiveAudioTrack(tr)      # la piste son de l'analyse
+                except Exception:
+                    pass
+            if self._play_from is not None:
+                t, self._play_from = self._play_from, None
+                self._start_player(t)
+
+    def _ms(self, t: float) -> int:
+        return int(round((t - self._t_start) * 1000))
+
+    def _start_player(self, t: float) -> None:
+        self.player.setPlaybackRate(self._speed)
+        self.player.setPosition(self._ms(t))
+        self.player.play()
+
+    def _player_t(self) -> float:
+        return self._t_start + self.player.position() / 1000.0
+
+    def _on_play_frame(self, frame) -> None:
+        """Image du lecteur pendant la lecture : montrée telle quelle (vignette d'un multiview
+        recadrée) ; la tête de lecture suit ; arrêt au bout du plan."""
+        if not self._playing or self._closing or not frame.isValid():
+            return
+        img = frame.toImage()
+        if img.isNull():
+            return
+        x0, y0, x1, y1 = self.an.shots[self.shot].shown
+        if (x0, y0, x1, y1) != (0.0, 0.0, 1.0, 1.0):
+            from PySide6.QtCore import QRect
+            w, h = img.width(), img.height()
+            img = img.copy(QRect(int(x0 * w), int(y0 * h), int((x1 - x0) * w), int((y1 - y0) * h)))
+        self.preview.set_qimage(img)
+        t = self._t_start + frame.startTime() / 1_000_000 if frame.startTime() >= 0 else self._player_t()
+        self._play_t = t
+        self.timeline.set_marks(t, self.timeline.chosen)
+        self.time_lbl.setText(f"{t:.3f} s")
+        sh = self.an.shots[self.shot]
+        if t >= sh.end - 1.0 / self.fps:                    # fin du plan
+            self._pause_here()
 
     def _set_speed(self, val: float) -> None:
         self._speed = val
         for b, v in zip(self.speed_btns, (1.0, 0.5, 0.25)):
             b.setChecked(v == val)
-        self._restart_clock()
+        if self.player is not None:
+            self.player.setPlaybackRate(val)
 
     def _toggle_play(self) -> None:
-        """▶ : lecture avec le son depuis l'image affichée. ⏸ : pause, l'image affichée est choisie."""
+        """▶ : lecture avec le son depuis l'image affichée. ❚❚ : pause sur l'image en cours."""
         if self._playing:
-            self._choose(self.cur)
+            self._pause_here()
             return
-        times = self._data()[0]
-        if len(times) < 2:
-            return
-        if self.cur >= len(times) - 1:
-            self.cur = 0
-        self._show_frame()          # la 1re image de la lecture est montrée elle aussi
+        self._ensure_player()
+        sh = self.an.shots[self.shot]
+        if self._wanted is not None:
+            t = self._wanted[1]
+        else:
+            times = self._data()[0]
+            t = self._t(self.cur) if times else sh.start
+        if t >= sh.end - 1.5 / self.fps:
+            t = sh.start                                   # fin du plan : on repart du début
         self._playing = True
+        self._play_t = t
         self.play_btn.setText("❚❚")
-        self._restart_clock()
-        self._timer.start()
+        QMP = self._QMP
+        if self.player.mediaStatus() in (QMP.LoadedMedia, QMP.BufferedMedia, QMP.EndOfMedia):
+            self._start_player(t)
+        else:
+            self._play_from = t                            # fichier en cours d'ouverture
 
-    def _restart_clock(self) -> None:
-        times = self._data()[0]
-        if times:
-            self._play_t0 = times[self.cur]
-        if self._playing:
-            self._play_sound(self._play_t0)
-        self._clock.start()
+    def _pause_here(self) -> None:
+        """Pause : on reste sur l'image en cours, puis ses images exactes se chargent (bande, flèches)."""
+        t = self._play_t if self._play_t is not None else (self._player_t() if self.player else None)
+        self._pause()
+        if t is not None:
+            self._go_soon(min(t, self.an.shots[self.shot].end - 0.5 / self.fps))
 
-    def _play_sound(self, t_from: float) -> None:
-        snd = self._snd.get(self._clap().id)
-        if snd is not None:
-            sig, rate, t_sig = snd
-            self._audio.play(sig, rate, t_sig, t_from, self._speed)
+    def _stop(self) -> None:
+        """■ : arrêt, retour au début du plan (rien n'est choisi)."""
+        self._pause()
+        self._goto(self.an.shots[self.shot].start)
 
     def _pause(self) -> None:
         """Arrête la lecture et le son, sans rien choisir."""
         self._playing = False
-        if self._timer.isActive():
-            self._timer.stop()
-        self._audio.stop()
+        self._play_from = None
+        if self.player is not None and self.player.playbackState() == self._QMP.PlayingState:
+            self.player.pause()
         self.play_btn.setText("▶")
 
     def _rest_index(self) -> int:
-        """Image montrée à l'arrêt : l'image choisie, sinon l'automatique, sinon face au son."""
-        c = self._clap()
         times = self._data()[0]
-        target = self.chosen.get(c.id)
-        if target is not None:
-            return self._first_of_series(self._index_at(times, target))
-        if self._auto_k is not None:
-            return self._auto_k
-        return self._first_of_series(self._index_at(times, c.t_audio - (self.cam.offset or 0.0)))
+        return self._first_of_series(self._index_at(times, self._rest_t())) if times else 0
 
-    def _play_tick(self) -> None:
+    # --- déplacement et choix -------------------------------------------------------
+    def _move(self, k: int) -> None:
+        """Va sur l'image k des images chargées (clic, glisser, flèches, vignette) : rien n'est
+        choisi, on se déplace librement pour relire."""
+        self._pause()
         times = self._data()[0]
-        if len(times) < 2:
-            self._pause()
+        if not times:
             return
-        t = self._play_t0 + self._clock.elapsed() / 1000.0 * self._speed
-        if t >= times[-1] + 1.0 / self.fps:   # fin de l'extrait (la dernière image a eu sa durée) :
-            # arrêt, retour sur l'image choisie (rien ne change)
-            self._pause()
-            self.cur = self._rest_index()
-            self._show()
-            return
-        k = int(np.searchsorted(times, t, side="right")) - 1
-        k = int(np.clip(k, 0, len(times) - 1))
-        if k != self.cur or not self.preview.has_frame():
-            self.cur = k
-            self._show_frame()
+        self.cur = self._first_of_series(int(np.clip(k, 0, len(times) - 1)))
+        t_img = times[self.cur]
+        if self._ensure(t_img):                    # près du bord : les images chargées suivent
+            nt = self._data()[0]
+            self.cur = self._first_of_series(self._index_at(nt, t_img))
+        self._show()
 
-    # --- choix -------------------------------------------------------------------
+    def _pick_current(self) -> None:
+        """« Cette image est le clap » (Entrée) : l'image affichée devient l'image du clap."""
+        self._settle()
+        self._choose(self.cur)
+
     def _choose(self, k: int) -> None:
         self._pause()
         c = self._clap()
@@ -764,77 +1233,93 @@ class ClapFrameDialog(QDialog):
             return
         self.cur = self._first_of_series(int(np.clip(k, 0, len(times) - 1)))
         t_img = times[self.cur]
-        best = self._pair(c, t_img)
-        if best is not c:
-            # claps rapprochés : l'image de contact choisie appartient à un autre son que celui
-            # de la liste ; on la rattache à ce son-là (sinon décalage faux d'un espacement)
-            j = self.claps.index(best)
-            self.chosen[best.id] = t_img
-            self.last_changed = best.id
-            self.clap_box.setItemText(j, self._clap_label(best))
-            self._switching = True
-            self.clap_box.setCurrentIndex(j)      # recharge autour de ce clap, sur l'image choisie
-            self._switching = False
-            # dans le passage chargé autour de ce son, la même image peut appartenir à une série
-            # commencée plus tôt (au bord d'un passage, la 1re image passe pour une vraie image) :
-            # on retient sa première apparition ici, celle qui est affichée
+        if self._ensure(t_img):                    # près du bord : la fenêtre glisse (même échelle)
             nt = self._data()[0]
-            if nt:
-                self.cur = self._first_of_series(self._index_at(nt, t_img))
-                self.chosen[best.id] = nt[self.cur]
-                self.clap_box.setItemText(j, self._clap_label(best))
-            self._notice = (f"Image rattachée au son de clap le plus proche : {best.t_audio:.3f} s "
-                            f"(et non {c.t_audio:.3f} s)")
+            self.cur = self._first_of_series(self._index_at(nt, t_img))
+            t_img = nt[self.cur]
+        if c is None:
+            self._notice = "Aucun son de clap détecté dans ce plan."
             self._show()
             return
+        if self.excluded.get(c.id):
+            self._notice = "Ce son est écarté : « Remettre ce son » d'abord."
+            self._show()
+            return
+        # l'image va TOUJOURS avec le clap sélectionné dans la liste : une caméra très en retard
+        # peut montrer son contact plus près du son suivant, ce n'est pas une raison de changer
         self.chosen[c.id] = t_img
         self.last_changed = c.id
-        self.clap_box.setItemText(self.clap_box.currentIndex(), self._clap_label(c))
+        self._relabel()
         self._show()
 
-    def _ref_offset(self, exclude: analysis.Clap) -> float:
-        """Décalage de référence pour apparier une image à un son : les AUTRES claps réglés à la
-        main, sinon la mesure automatique si elle est sûre, sinon 0 (son le plus proche). Une source
-        ambiguë ne sert pas de référence : ses claps automatiques sont justement mal appariés."""
+    def _ref_offset(self, exclude: analysis.Clap | None, trust_auto: bool = True) -> float | None:
+        """Décalage de référence pour trouver le son d'un clap ajouté : les AUTRES claps réglés à la
+        main, sinon la mesure automatique si elle est sûre. Une source ambiguë ne sert pas de
+        référence : ses claps automatiques sont justement mal appariés."""
         offs = [o.t_audio - t for o in self.claps
-                if o is not exclude and not o.excluded and (t := self.chosen.get(o.id)) is not None]
+                if o is not exclude and not self.excluded.get(o.id) and (t := self.chosen.get(o.id)) is not None]
         if offs:
             return float(np.median(offs))
-        if self.cam.offset is not None and not self.cam.ambiguous:
+        if trust_auto and self.cam.offset is not None and not self.cam.ambiguous:
             return float(self.cam.offset)
-        return 0.0
-
-    def _pair(self, c: analysis.Clap, t_img: float) -> analysis.Clap:
-        """Son de clap qui va avec cette image : celui qui donne le décalage le plus proche de celui
-        des autres claps (ou de 0). On ne change de clap que si l'écart est net (> 100 ms)."""
-        ref = self._ref_offset(c)
-        same = [o for o in self.claps if o.shot == c.shot]
-        best = min(same, key=lambda o: abs(o.t_audio - t_img - ref))
-        if best is not c and abs(c.t_audio - t_img - ref) - abs(best.t_audio - t_img - ref) > 0.1:
-            return best
-        return c
+        return None
 
     def _step(self, d: int) -> None:
+        self._settle()
         vis = self._visible()
         if not vis:
             return
+        times = self._data()[0]
         pos = int(np.searchsorted(vis, self._first_of_series(self.cur)))
         if pos < len(vis) and vis[pos] == self.cur:
             pos += d
         elif d < 0:
             pos -= 1
-        self._choose(vis[int(np.clip(pos, 0, len(vis) - 1))])
+        if 0 <= pos < len(vis):
+            self._move(vis[pos])
+            return
+        # au bord de la fenêtre : la suite du plan (la fenêtre glisse, même échelle)
+        sh = self.an.shots[self.shot]
+        t = times[self.cur] + d * max(1.0 / self.fps, 1.0 / (self.cam.source_fps or self.fps))
+        if not (sh.start <= t <= sh.end - 0.5 / self.fps):
+            return
+        self._ensure(t, force=True)
+        nt = self._data()[0]
+        if nt:
+            self._move(self._index_near(nt, t))
 
     def _pick_slot(self, j: int) -> None:
         if j < len(self._slots):
-            self._choose(self._slots[j])
+            self._move(self._slots[j])
 
     def _reset_auto(self) -> None:
         c = self._clap()
+        if c is None:
+            return
         self.chosen[c.id] = None
         self.last_changed = c.id
-        self.clap_box.setItemText(self.clap_box.currentIndex(), self._clap_label(c))
+        self._relabel()
         self._load()
 
+    # --- sons qui ne sont pas des claps, claps pas entendus -----------------------------
+    def _toggle_excluded(self) -> None:
+        c = self._clap()
+        if c is None:
+            return
+        self.excluded[c.id] = not self.excluded.get(c.id)
+        self.last_changed = c.id
+        self._notice = (f"Le son de {c.t_audio:.3f} s ne compte plus (pas un clap)."
+                        if self.excluded[c.id] else f"Le son de {c.t_audio:.3f} s compte de nouveau.")
+        self._relabel()
+        self._update_buttons()
+        self._set_timeline()
+        self._show()
+
+    # --- résultats -----------------------------------------------------------------
     def changes(self) -> dict[int, float | None]:
+        """Images choisies à la main qui changent (claps de l'analyse)."""
         return {c.id: t for c in self.claps if (t := self.chosen.get(c.id)) != c.manual_t}
+
+    def exclusions(self) -> dict[int, bool]:
+        """Sons écartés ou remis (claps de l'analyse)."""
+        return {c.id: ex for c in self.claps if (ex := bool(self.excluded.get(c.id))) != c.excluded}

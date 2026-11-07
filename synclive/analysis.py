@@ -449,7 +449,7 @@ def _split_shots_by_offset(shots: list[shots_mod.Shot], claps: list[Clap], scan:
                                 start=float(times[i0]) if j else s.start,
                                 end=float(times[i1]) if i1 < times.size and j < len(bounds) - 2 else s.end,
                                 camera=s.camera)
-            ns.look, ns.qr, ns.region, ns.tile, ns.mire = s.look, s.qr, s.region, s.tile, s.mire
+            ns.look, ns.qr, ns.region, ns.tile, ns.mire, ns.view = s.look, s.qr, s.region, s.tile, s.mire, s.view
             new_shots.append(ns)
             group = spans[j][3] if spans else []
             seg_off[ns.index] = spans[j][2] if spans else None
@@ -581,7 +581,7 @@ def _split_shots_by_qr(path: str, shots: list[shots_mod.Shot], claps: list[Clap]
                                 start=s.start if j == 0 else float(times[i0]),
                                 end=s.end if j == len(merged) - 1 else float(times[i1]),
                                 camera=s.camera, look=s.look, qr=r[0], region=s.region, tile=s.tile,
-                                mire=s.mire)
+                                mire=s.mire, view=s.view)
             out.append(ns)
         segs = list(zip(range(len(merged)), bounds[:-1], bounds[1:]))
         first_new = len(out) - len(merged)
@@ -769,9 +769,10 @@ def _beep_train(tonal: list) -> list:
     return sorted(keep, key=lambda x: x[0].t)
 
 
-def _split_multiview(shots: list[shots_mod.Shot], scan: media.MotionScan) -> list[shots_mod.Shot]:
+def _split_multiview(shots: list[shots_mod.Shot], scan: media.MotionScan,
+                     scan_w: int = 16, scan_h: int = 9) -> list[shots_mod.Shot]:
     """Découpe chaque plan en vignettes s'il s'agit d'une mosaïque de caméras bord à bord."""
-    from .multiview import detect_tiles, tile_label
+    from .multiview import detect_layout
     if scan.samples is None:
         return shots
     out: list[shots_mod.Shot] = []
@@ -779,19 +780,20 @@ def _split_multiview(shots: list[shots_mod.Shot], scan: media.MotionScan) -> lis
     tile_looks: dict[tuple, int] = {}
     for s in shots:
         m = (scan.sample_idx >= s.i0) & (scan.sample_idx < s.i1)
-        tiles = detect_tiles(scan.samples[m]) if m.sum() >= 4 else [(0.0, 0.0, 1.0, 1.0)]
+        aspect = (scan_w / scan_h) if scan_h else 16 / 9
+        tiles = detect_layout(scan.samples[m], frame_aspect=aspect) if m.sum() >= 4 else []
         if len(tiles) <= 1:
             s.index = len(out)
             out.append(s)
             continue
-        for k, reg in enumerate(tiles):
+        for k, (reg, label, view) in enumerate(tiles):
             key = (s.look, tuple(round(v, 2) for v in reg))
             if key not in tile_looks:
                 tile_looks[key] = next_look
                 next_look += 1
             out.append(shots_mod.Shot(index=len(out), i0=s.i0, i1=s.i1, start=s.start, end=s.end,
                                       camera=s.camera, look=tile_looks[key], region=reg,
-                                      tile=tile_label(reg, len(tiles))))
+                                      tile=label, view=None if view == reg else view))
     return out
 
 
@@ -859,7 +861,7 @@ def _run(path, settings, progress, cancel) -> Analysis:
 
     # --- multiview maison : chaque vignette devient une source ---------------------------
     prog("Recherche de vignettes (multiview)", 0.77)
-    shots = _split_multiview(shots, scan)
+    shots = _split_multiview(shots, scan, info.width, info.height)
 
     def shot_at(t: float) -> int | None:
         for s in shots:
@@ -1030,4 +1032,4 @@ def refresh_images(an: Analysis, shot_ids: list[int] | None = None) -> None:
     frames = media.grab_frames(an.info.path, list(targets.values()))
     for si, t in targets.items():
         if t in frames:
-            an.shot_images[si] = _crop(frames[t], an.shots[si].region)
+            an.shot_images[si] = _crop(frames[t], an.shots[si].shown)

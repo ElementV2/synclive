@@ -23,11 +23,18 @@ class Shot:
     qr: str | None = None       # identifiant de mire SyncLive lu dans le QR (« 07 · ATLAS »)
     region: tuple[float, float, float, float] = (0.0, 0.0, 1.0, 1.0)   # vignette (x0, y0, x1, y1)
     tile: str | None = None     # libellé de la vignette (« vignette haut gauche »), None = plein écran
+    view: tuple[float, float, float, float] | None = None   # cadre MONTRÉ (vignette entière) si la mesure
+    #                             se fait sur une partie seulement (`region` : hors d'une incrustation)
     mire: bool = False          # affiche une mire (flashs réguliers), même sans bips enregistrés
 
     @property
     def duration(self) -> float:
         return self.end - self.start
+
+    @property
+    def shown(self) -> tuple[float, float, float, float]:
+        """Cadre affiché (cartes, export, réglage du clap) : la caméra entière."""
+        return self.view or self.region
 
 
 def _is_flash(scan: MotionScan, k: int, thr: float) -> bool:

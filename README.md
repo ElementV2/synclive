@@ -55,11 +55,13 @@ l'écart restant après arrondi.
 - Résultats robustes (médiane, dispersion, indice de confiance) et corrections manuelles :
   renommer, fusionner, déplacer un plan, exclure un clap, choisir un autre candidat, **supprimer
   une source** où il ne se passe rien (« Annuler la dernière modification » la remet).
-- **Régler l'image du clap à la main** : lecteur avec le son (▶ / Espace, ×1, ×½, ×¼), une timeline
-  avec la forme d'onde, les sons détectés comme claps et l'image choisie, une bande d'images
-  (9, 15 ou 21), « Zoom sur les mains » et « Éclaircir ». L'image où l'on clique, relâche ou met
-  pause devient l'image du clap ; une fois validée, elle fait la mesure de la source et la carte
-  de la source montre cette image.
+- **Régler l'image du clap à la main, sur tout le rush** : la timeline montre le plan entier avec
+  ses sons de clap et s'ouvre sur leur zone (clic ou glisser : y aller, l'image suit ; molette :
+  zoom ; « Tout le plan » ; ■ : début). On choisit le son dans la liste, on se place sur l'image où
+  les mains se touchent (lecture avec le son ×1, ×½, ×¼, bande de 9, 15 ou 21 images, ← →,
+  « Zoom sur les mains », « Éclaircir ») et **« Cette image est le clap »** (Entrée) la retient
+  pour ce son. « Ce son n'est pas un clap » écarte un bruit de micro. Une fois validée, l'image
+  fait la mesure de la source et la carte de la source la montre.
 - Export : une image annotée par source, un récapitulatif, `plan_correction.csv`,
   `rapport_claps.csv` et `rapport.json`.
 
@@ -148,6 +150,12 @@ l'écart restant après arrondi.
 - Une mosaïque de caméras bord à bord, sans séparateur, est découpée automatiquement en vignettes :
   chaque vignette devient une source. Un seul clap vu par toutes les caméras donne le décalage de
   chacune ; claps et bips de mire peuvent se suivre dans la même bande son.
+- Une jointure n'est retenue que si elle sépare deux images sans rapport : les lignes de la scène
+  ne la traversent pas, ce qui bouge non plus. Une caméra seule devant une étagère, un mur ou le bord
+  d'un panneau n'est donc pas découpée ; chaque vignette doit aussi avoir une forme d'image de caméra.
+- **Caméra incrustée** (image dans l'image, par-dessus une mosaïque ou une image plein écran, au
+  moins 16 % de la largeur) : une source à part. Les vignettes qu'elle recouvre sont mesurées sur
+  leur partie visible et montrées entières.
 
 **Partage réseau**
 - SyncLive affiche un lien et un QR code. Chaque machine ouvre le lien dans son navigateur, reçoit
@@ -158,6 +166,11 @@ l'écart restant après arrondi.
 - Le bouton « Journal » (en haut à droite) montre ce que l'app a fait et les erreurs, avec
   « Copier tout » pour l'envoyer et « Ouvrir le dossier du journal »
   (`%LOCALAPPDATA%\SyncLive\journal\synclive.log`).
+
+**Démarrage**
+- Une petite fenêtre « SyncLive démarre… » s'affiche aussitôt, puis la fenêtre complète (moins
+  d'une seconde d'habitude ; au premier lancement sur un PC, Windows vérifie d'abord les fichiers).
+  Le journal note la durée de chaque étape.
 
 **Sans réglage, à jour tout seul**
 - Aucun réglage : piste audio et sensibilité sont choisies automatiquement.
@@ -290,6 +303,7 @@ refus d'un autre format ; montage enregistré et repris. Journal et rapport de n
 | `synclive/applog.py` | journal de l'app (actions, erreurs) |
 | `synclive/ui_threads.py` | fils de travail Qt gardés jusqu'à leur vraie fin |
 | `synclive/cli.py` | ligne de commande |
+| `synclive/boot.py` | démarrage : petite fenêtre tout de suite, puis chargement du reste |
 | `synclive/ui.py` | fenêtre principale, onglet Analyse |
 | `synclive/ui_clap.py`, `synclive/ui_audio.py` | réglage de l'image du clap (lecteur, timeline, son) |
 | `synclive/ui_pattern.py` | onglet Mires |

@@ -4,6 +4,38 @@ Toutes les évolutions notables de SyncLive sont listées ici.
 Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), numérotation [SemVer](https://semver.org/lang/fr/) :
 `MAJEUR.MINEUR.CORRECTIF` (correctif = corrections, mineur = nouveautés compatibles, majeur = changements incompatibles).
 
+## [1.6.0] - 2026-11-07
+
+### Corrigé
+- Journal : le résultat de chaque source après l'analyse (décalage, claps retenus, confiance) et
+  chaque réglage à la main (image choisie, son écarté, nouveau décalage) y sont notés.
+- **Démarrage : une petite fenêtre « SyncLive démarre… » s'affiche tout de suite**, avant le
+  chargement des bibliothèques. Au premier lancement sur un PC, Windows et l'antivirus vérifient
+  plusieurs centaines de Mo de fichiers : l'app tournait sans rien montrer. Le journal note le
+  temps de chaque étape du démarrage.
+- **Réglage du clap : lecture fluide**, par le lecteur vidéo de Qt (avant : la moitié des images,
+  la vidéo n'avançait qu'à mi-vitesse, des arrêts jusqu'à 0,7 s et le son relancé chaque seconde).
+  La pause s'arrête sur l'image montrée, dont les images exactes se chargent pour la bande.
+- **Réglage du clap : un clic n'importe où dans la timeline montre l'image aussitôt** (≈ 70 ms) ;
+  la bande d'images se charge en fond, les passages voisins sont préchargés (flèches et lecture
+  sans attente).
+- **Analyse : plus de fausses mosaïques.** Une caméra fixe devant une étagère, un mur de briques
+  ou le bord d'un panneau n'est plus découpée en « vignettes » : une jointure doit séparer deux
+  images sans rapport (les lignes de la scène ne la traversent pas, ce qui bouge non plus) et
+  chaque vignette doit avoir une forme d'image de caméra.
+
+### Ajouté
+- **Réglage du clap sur tout le rush de la source** : la timeline s'ouvre sur la zone des sons de
+  clap détectés (tout le plan s'il n'y en a aucun) ; clic ou glisser : la tête y va, l'image suit ;
+  molette : zoom, comme au Montage ; « Tout le plan » ou double-clic pour tout voir ; ■ Stop (touche
+  Début) : début du plan. Se déplacer ne choisit plus rien : **« Cette image est le clap »
+  (Entrée)** retient l'image affichée, toujours pour le clap sélectionné (plus de bascule sur le son
+  d'à côté, faux avec une caméra très en retard). Choix du plan si la source en a plusieurs.
+- **« Ce son n'est pas un clap »** (bruit de micro, choc) : le son ne compte plus pour la mesure.
+- **Analyse : caméra incrustée** (image dans l'image, par-dessus une mosaïque ou une image plein
+  écran) reconnue comme une source à part ; les vignettes qu'elle recouvre sont mesurées sur leur
+  partie visible, mais montrées entières, au format de la caméra (16/9).
+
 ## [1.5.0] - 2026-11-07
 
 ### Ajouté
@@ -223,6 +255,7 @@ Première version (remplacée par la 1.1.0, qui apporte la mise à jour automati
 - Export : images annotées, récapitulatif, CSV, JSON.
 - Exécutable Windows autonome (licence GPL-3.0, composants tiers documentés).
 
+[1.6.0]: https://github.com/ElementV2/synclive/releases/tag/v1.6.0
 [1.5.0]: https://github.com/ElementV2/synclive/releases/tag/v1.5.0
 [1.4.0]: https://github.com/ElementV2/synclive/releases/tag/v1.4.0
 [1.3.2]: https://github.com/ElementV2/synclive/releases/tag/v1.3.2

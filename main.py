@@ -39,6 +39,7 @@ if len(sys.argv) > 1 and sys.argv[1] == "--cli":
 
     raise SystemExit(cli_main(sys.argv[2:]))
 
-from synclive.ui import main  # noqa: E402
+# petite fenêtre « SyncLive démarre… » tout de suite, puis chargement du reste (voir synclive/boot.py)
+from synclive.boot import run  # noqa: E402
 
-raise SystemExit(main())
+raise SystemExit(run())

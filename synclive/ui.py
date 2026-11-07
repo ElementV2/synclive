@@ -472,7 +472,12 @@ class MainWindow(QMainWindow):
                             "en haut à droite).")
 
     def _done(self, an: analysis.Analysis) -> None:
-        log.info(f"Analyse terminée : {len(an.cameras())} source(s), {len(an.claps)} clap(s)")
+        cams = an.cameras()
+        log.info(f"Analyse terminée : {len(cams)} source(s), {len(an.claps)} clap(s)")
+        for c in cams:                             # le résultat de chaque source, pour comprendre après coup
+            off = "—" if c.offset is None else f"{c.offset * 1000:+.0f} ms"
+            log.info(f"  {c.name}{' · ' + c.tile if c.tile else ''} : {off}, {c.n_used}/{c.n_total} claps, "
+                     f"confiance {c.confidence}" + (f" — {c.ambiguous}" if c.ambiguous else ""))
         self.an = an
         self._undo.clear()
         self.undo_btn.setEnabled(False)
@@ -690,14 +695,21 @@ class MainWindow(QMainWindow):
     def _snapshot(self) -> None:
         an = self.an
         self._undo.append(([s.camera for s in an.shots], dict(an.camera_names),
-                           [(c.excluded, c.forced, c.manual_t) for c in an.claps], set(an.removed)))
+                           [(c.excluded, c.forced, c.manual_t) for c in an.claps], set(an.removed),
+                           dict(an.image_clap)))
         del self._undo[:-50]
         self.undo_btn.setEnabled(True)
 
     def undo(self) -> None:
         if not (self.an and self._undo):
             return
-        cams, names, claps, removed = self._undo.pop()
+        cams, names, claps, removed, shown = self._undo.pop()
+        if len(self.an.claps) > len(claps):         # claps ajoutés à la main depuis : retirés
+            changed_new = {c.shot for c in self.an.claps[len(claps):]}
+            del self.an.claps[len(claps):]
+        else:
+            changed_new = set()
+        self.an.image_clap = shown
         self.an.removed = removed
         for s, c in zip(self.an.shots, cams):
             s.camera = c
@@ -707,7 +719,7 @@ class MainWindow(QMainWindow):
             if (c.excluded, c.forced, c.manual_t) != (ex, fo, mt):
                 changed.add(c.shot)
             c.excluded, c.forced, c.manual_t = ex, fo, mt
-        self._refresh_images(changed)
+        self._refresh_images(changed | changed_new)
         self.undo_btn.setEnabled(bool(self._undo))
         self.refresh_later()
 
@@ -752,16 +764,20 @@ class MainWindow(QMainWindow):
             return
         from .ui_clap import ClapFrameDialog
         cam = next((c for c in self.an.cameras() if c.id == cid), None)
-        if cam is None or not cam.claps:
+        if cam is None or not cam.shots:       # sans clap entendu : on peut en ajouter à la main
             return
         dlg = ClapFrameDialog(self.an, cam, self)
         # haute d'office, et large juste ce qu'il faut pour la vidéo : elle doit être lisible
         dlg.fit_to((self.screen() or QGuiApplication.primaryScreen()).availableGeometry())
         if dlg.exec() != ClapFrameDialog.Accepted:
             return
-        ch = dlg.changes()
-        if not ch:
+        ch, ex = dlg.changes(), dlg.exclusions()
+        if not (ch or ex):
             return
+        log.info(f"Réglage à la main de {cam.name} : " + ", ".join(
+            [f"son {self.an.claps[i].t_audio:.3f} s → image {t:.3f} s" if t is not None
+             else f"son {self.an.claps[i].t_audio:.3f} s → automatique" for i, t in ch.items()]
+            + [f"son {self.an.claps[i].t_audio:.3f} s {'écarté' if f else 'remis'}" for i, f in ex.items()]))
         self._snapshot()
         for clap_id, t in ch.items():
             c = self.an.claps[clap_id]
@@ -769,11 +785,21 @@ class MainWindow(QMainWindow):
             if t is not None:
                 c.excluded = False
                 c.forced = None
+        for clap_id, flag in ex.items():           # sons qui ne sont pas des claps (après les images)
+            self.an.claps[clap_id].excluded = flag
+        touched = set(ch) | set(ex)
         # l'aperçu montre l'image choisie (celle du clap réglé en dernier), pas celle de l'automatique
-        last = dlg.last_changed if dlg.last_changed in ch else next(iter(ch))
-        self.an.image_clap[self.an.claps[last].shot] = last
-        self._refresh_images({self.an.claps[i].shot for i in ch})
+        last = dlg.last_changed
+        if last not in touched:
+            last = next(iter(ch), None)
+        if last is not None and not self.an.claps[last].excluded:
+            self.an.image_clap[self.an.claps[last].shot] = last
+        self._refresh_images({self.an.claps[i].shot for i in touched})
         self.refresh_later()
+        after = next((c for c in self.an.cameras() if c.id == cid), None)
+        if after is not None:
+            log.info(f"  {after.name} : " + ("—" if after.offset is None else f"{after.offset * 1000:+.0f} ms")
+                     + f", {after.n_used}/{after.n_total} claps")
 
     def _refresh_images(self, shots: set[int]) -> None:
         if not shots or self.an is None:
@@ -834,20 +860,24 @@ def install_french(app) -> None:
             return
 
 
-def main() -> int:
-    from . import applog
-    applog.setup()
-    app = QApplication(sys.argv)
-    applog.install_qt_handler()
+def start(app) -> "MainWindow":
+    """Fenêtre principale, sur une application déjà créée (voir boot.py : petite fenêtre d'abord)."""
     app.setApplicationName("SyncLive")
     install_french(app)
     app.setStyleSheet(STYLE)
     app.setWindowIcon(QIcon(str(brand.asset("app-icon-256.png"))))
     w = MainWindow()
     w.show()
+    w.raise_()
+    w.activateWindow()
     if len(sys.argv) > 1 and Path(sys.argv[1]).exists():
         w.start(sys.argv[1])
-    return app.exec()
+    return w
+
+
+def main() -> int:
+    from .boot import run
+    return run()
 
 
 if __name__ == "__main__":

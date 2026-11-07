@@ -70,12 +70,12 @@ class AudioPlayer:
 class Timeline(QWidget):
     """Timeline du lecteur : le son de l'extrait chargé, une règle en secondes autour du son du
     clap, les images réelles, le son du clap (orange), l'image choisie (vert) et la tête de lecture
-    (blanc, poignée ronde). Appuyer ou glisser : `scrub` (on affiche) ; relâcher : `released`
+    (blanc, poignée ronde). Appuyer ou glisser : `scrub` (on affiche) ; relâcher : `released` (on reste là)
     (l'image à cet instant est choisie)."""
 
     scrub = Signal(float)
     released = Signal(float)
-    step = Signal(int)      # molette : image précédente (-1) / suivante (+1)
+    zoomed = Signal(bool)   # la vue a changé : zoom sur une zone (True) ou tout le plan (False)
 
     MARGIN = 12         # px de chaque côté : la poignée reste entière aux extrémités
     RULER = 20          # px : étiquette du son du clap et règle des secondes au-dessus de la piste
@@ -87,7 +87,7 @@ class Timeline(QWidget):
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.setCursor(Qt.PointingHandCursor)
         self.setMouseTracking(True)
-        self.setToolTip("Clique ou glisse pour te placer : l'image où tu relâches devient l'image du clap.")
+        self.setToolTip("Clic ou glisser : y aller, l'image suit · molette : zoom · double-clic : tout le plan")
         self.sig = np.zeros(0, np.float32)
         self.rate = 48000
         self.t_sig = 0.0
@@ -100,12 +100,19 @@ class Timeline(QWidget):
         self.dragging = False
         self._hover: float | None = None
         self._env: tuple[np.ndarray, np.ndarray] | None = None
+        self.norm: float | None = None     # crête de référence (celle du plan) : même hauteur partout
+        self.peaks: np.ndarray | None = None   # aperçu du son de tout le plan (crêtes), à la place de sig
+        self.fa, self.fb = 0.0, 1.0            # tout le plan ; [ta, tb] est la partie montrée (zoom)
 
     def set_data(self, sig: np.ndarray, rate: int, t_sig: float, ta: float, tb: float,
                  claps: list[tuple[float, bool]], frames: list[float] | None = None,
                  ref: float | None = None) -> None:
         self.sig, self.rate, self.t_sig = sig, rate, t_sig
-        self.ta, self.tb = ta, max(tb, ta + 1e-3)
+        tb = max(tb, ta + 1e-3)
+        if (abs(ta - self.fa) > 1e-6 or abs(tb - self.fb) > 1e-6) or not self.zoomed_in():
+            self.ta, self.tb = ta, tb          # autre plan : tout le plan ; même plan : le zoom reste
+        self.fa, self.fb = ta, tb
+        self._tell_zoom()
         self.claps = claps
         self.frames = list(frames or [])
         self.ref = ref
@@ -115,6 +122,31 @@ class Timeline(QWidget):
     def set_marks(self, playhead: float | None, chosen: float | None) -> None:
         self.playhead, self.chosen = playhead, chosen
         self.update()
+
+    # --- zoom --------------------------------------------------------------------------
+    def zoomed_in(self) -> bool:
+        return bool(self.tb - self.ta < (self.fb - self.fa) - 1e-6)
+
+    def _tell_zoom(self) -> None:
+        self.zoomed.emit(self.zoomed_in())
+
+    def zoom_to(self, a: float, b: float) -> None:
+        a, b = sorted((a, b))
+        if b - a < 0.2:                          # au plus près : 0,2 s sur toute la largeur
+            c = (a + b) / 2
+            a, b = c - 0.1, c + 0.1
+        a, b = max(self.fa, a), min(self.fb, b)
+        self.ta, self.tb = a, max(b, a + 1e-3)
+        self._env = None
+        self.update()
+        self._tell_zoom()
+
+    def reset_zoom(self) -> None:
+        if self.zoomed_in():
+            self.ta, self.tb = self.fa, self.fb
+            self._env = None
+            self.update()
+            self._tell_zoom()
 
     # --- axe ---------------------------------------------------------------------------
     def _w(self) -> int:
@@ -136,6 +168,21 @@ class Timeline(QWidget):
             return self._env
         lo = np.zeros(w, np.float32)
         hi = np.zeros(w, np.float32)
+        if self.peaks is not None and self.peaks.size:
+            # tout le plan : crêtes en décibels (48 dB sous la plus forte), la parole et les claps
+            # faibles restent visibles à côté d'un choc très fort
+            n = self.peaks.size
+            full = max(1e-6, self.fb - self.fa)
+            edges = self.ta + np.arange(w + 1) / w * (self.tb - self.ta)          # partie montrée
+            idx = np.clip(((edges - self.fa) / full * n).astype(int), 0, n)
+            top = float(self.peaks.max()) or 1.0
+            for i in range(w):
+                seg = self.peaks[idx[i]:max(idx[i] + 1, idx[i + 1])]
+                pk = float(seg.max()) if seg.size else 0.0
+                hi[i] = float(np.clip(1.0 + 20.0 * np.log10(max(pk, 1e-9) / top) / 48.0, 0.0, 1.0))
+            lo = -hi
+            self._env = (lo, hi)
+            return self._env
         if self.sig.size:
             edges = self.ta + np.arange(w + 1) / w * (self.tb - self.ta)
             idx = np.clip(np.round((edges - self.t_sig) * self.rate).astype(int), 0, self.sig.size)
@@ -143,7 +190,8 @@ class Timeline(QWidget):
                 seg = self.sig[idx[i]:max(idx[i] + 1, idx[i + 1])]
                 if seg.size:
                     lo[i], hi[i] = float(seg.min()), float(seg.max())
-            peak = float(max(np.abs(lo).max(), np.abs(hi).max())) or 1.0
+            peak = self.norm or float(max(np.abs(lo).max(), np.abs(hi).max())) or 1.0
+            lo, hi = np.clip(lo / peak, -1, 1) * peak, np.clip(hi / peak, -1, 1) * peak
             lo, hi = lo / peak, hi / peak
         self._env = (lo, hi)
         return self._env
@@ -171,10 +219,14 @@ class Timeline(QWidget):
         p.setPen(QPen(QColor("#2A2A30"), 1))
         p.setBrush(QColor("#1C1C21"))
         p.drawRoundedRect(tr, 6, 6)
-        # règle : secondes par rapport au son du clap (graduations dans le haut de la piste)
-        ref = self.ref if self.ref is not None else self.ta
+        # règle : secondes par rapport au son du clap (court passage) ou temps du fichier (tout un
+        # plan), graduations dans le haut de la piste
         span = self.tb - self.ta
-        minor, major = (0.1, 0.5) if span <= 4.5 else (0.5, 1.0)
+        ref = self.ref if self.ref is not None and span <= 12 else 0.0
+        steps = ((4.5, 0.1, 0.5), (12, 0.5, 1.0), (40, 1.0, 5.0), (130, 5.0, 10.0), (400, 10.0, 60.0),
+                 (1500, 60.0, 300.0))
+        minor, major = next(((a, b) for lim, a, b in steps if span <= lim), (300.0, 1800.0))
+        absolute = ref == 0.0
         per_major = int(round(major / minor))
         k0 = int(np.ceil((self.ta - ref) / minor - 1e-6))
         k1 = int(np.floor((self.tb - ref) / minor + 1e-6))
@@ -183,8 +235,14 @@ class Timeline(QWidget):
             is_major = k % per_major == 0
             p.setPen(QPen(QColor("#4A4A52") if is_major else QColor("#303037"), 1))
             p.drawLine(QPointF(x, tr.top() + 1), QPointF(x, tr.top() + (7 if is_major else 4)))
-            if is_major and k != 0:
-                lab = f"{k * minor:+g} s".replace(".", ",").replace("-", "−")
+            if is_major and (k != 0 or absolute):
+                if absolute:
+                    tt = k * minor
+                    m_, s_ = divmod(tt, 60.0)
+                    lab = (f"{int(m_)}:{s_:04.1f}".replace(".", ",") if major < 1.0
+                           else f"{int(m_)}:{int(round(s_)):02d}")
+                else:
+                    lab = f"{k * minor:+g} s".replace(".", ",").replace("-", "−")
                 p.setPen(QColor("#6E6B66"))
                 p.drawText(QRectF(x - 30, tr.top() + 7, 60, 13), Qt.AlignCenter, lab)
         # son
@@ -238,10 +296,13 @@ class Timeline(QWidget):
 
     # --- souris ------------------------------------------------------------------------
     def mousePressEvent(self, e):
-        if e.button() == Qt.LeftButton:
-            self.dragging = True
-            self.setCursor(Qt.SizeHorCursor)
-            self.scrub.emit(self.t_of(e.position().x()))
+        """Clic ou glisser n'importe où : la tête va là, l'image suit (comme au Montage)."""
+        if e.button() != Qt.LeftButton:
+            return
+        x = e.position().x()
+        self.dragging = True
+        self.setCursor(Qt.SizeHorCursor)
+        self.scrub.emit(self.t_of(x))
 
     def mouseMoveEvent(self, e):
         self._hover = self.t_of(e.position().x())
@@ -256,13 +317,28 @@ class Timeline(QWidget):
             self.released.emit(self.t_of(e.position().x()))
             self.update()
 
+    def mouseDoubleClickEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            self.reset_zoom()                      # double-clic : tout le plan
+
     def wheelEvent(self, e):
+        """Molette : zoom autour de la souris (comme au Montage)."""
         dy = e.angleDelta().y()
         if dy and not self.dragging:
-            self.step.emit(-1 if dy > 0 else 1)
+            t = self.t_of(e.position().x())
+            span = self.tb - self.ta
+            full = self.fb - self.fa
+            new = min(full, max(0.2, span * (0.8 if dy > 0 else 1.25)))
+            frac = (t - self.ta) / max(1e-6, span)
+            a = min(max(self.fa, t - frac * new), self.fb - new)
+            self.ta, self.tb = a, a + new
+            self._env = None
+            self.update()
+            self._tell_zoom()
         e.accept()
 
     def leaveEvent(self, e):
         self._hover = None
         self.update()
         super().leaveEvent(e)
+

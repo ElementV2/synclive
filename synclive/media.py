@@ -309,7 +309,7 @@ def grab_frames(path: str, targets: list[float], max_width: int = 1920,
 
 
 def decode_range(path: str, t0: float, t1: float, region=(0.0, 0.0, 1.0, 1.0),
-                 max_width: int = 1280) -> tuple[list[float], list[np.ndarray]]:
+                 max_width: int = 1280, stop=None) -> tuple[list[float], list[np.ndarray]]:
     """Toutes les images de [t0, t1] (RGB uint8), recadrées sur `region` (vignette d'un multiview,
     coordonnées de l'image non tournée) puis tournées pour l'affichage. Sert à la bande d'images
     du réglage manuel d'un clap : les temps sont ceux du décodeur, comme pour l'analyse."""
@@ -319,8 +319,10 @@ def decode_range(path: str, t0: float, t1: float, region=(0.0, 0.0, 1.0, 1.0),
     with av.open(path) as c:
         vs = c.streams.video[0]
         vs.thread_type = "AUTO"
-        c.seek(max(0, int(max(0.0, t0 - 1.0) / vs.time_base)), stream=vs, backward=True, any_frame=False)
+        c.seek(max(0, int(max(0.0, t0 - 0.05) / vs.time_base)), stream=vs, backward=True, any_frame=False)
         for frame in c.decode(vs):
+            if stop is not None and stop():
+                raise InterruptedError
             t = frame.time
             if t is None or t < t0 - 1e-6:
                 continue
@@ -337,6 +339,46 @@ def decode_range(path: str, t0: float, t1: float, region=(0.0, 0.0, 1.0, 1.0),
             frames.append(np.ascontiguousarray(_rotate(crop, int(getattr(frame, "rotation", 0) or 0))))
             times.append(float(t))
     return times, frames
+
+
+def audio_peaks(path: str, stream_index: int, t0: float, t1: float, n: int,
+                stop=lambda: False, out: np.ndarray | None = None) -> np.ndarray:
+    """Crête du son (0-1) de [t0, t1] découpé en `n` cases, en une lecture du fichier sans tout
+    garder en mémoire (aperçu d'un plan de plusieurs minutes ou heures). `out` se remplit au fur
+    et à mesure (affichage progressif) ; `stop()` vrai : on s'arrête."""
+    res = out if out is not None else np.zeros(n, np.float32)
+    span = max(1e-6, t1 - t0)
+    with av.open(path) as c:
+        if not c.streams.audio or stream_index >= len(c.streams.audio):
+            return res
+        st = c.streams.audio[stream_index]
+        st.thread_type = "AUTO"
+        c.seek(max(0, int(max(0.0, t0 - 0.5) / st.time_base)), stream=st, backward=True, any_frame=False)
+        for frame in c.decode(st):
+            if stop():
+                break
+            if frame.time is None:
+                continue
+            ft = float(frame.time)
+            if ft > t1:
+                break
+            x = frame.to_ndarray()
+            if x.size == 0:
+                continue
+            if x.dtype.kind == "i":
+                x = x.astype(np.float32) / float(np.iinfo(x.dtype).max)
+            nch = max(1, len(frame.layout.channels))
+            if frame.format.is_planar:                              # (canaux, échantillons)
+                a = np.abs(x).max(axis=0)
+            else:                                                   # entrelacé : (1, échantillons × canaux)
+                a = np.abs(x.reshape(-1)[: x.size // nch * nch].reshape(-1, nch)).max(axis=1)
+            rate = frame.sample_rate or 48000
+            ts = ft + np.arange(a.size) / rate
+            k = ((ts - t0) / span * n).astype(np.int64)
+            ok = (k >= 0) & (k < n)
+            if ok.any():
+                np.maximum.at(res, k[ok], a[ok].astype(np.float32))
+    return res
 
 
 def decode_audio_range(path: str, stream_index: int, t0: float, t1: float) -> tuple[np.ndarray, int, float]:
